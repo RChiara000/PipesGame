@@ -254,14 +254,17 @@ class PipeLevel {
 
   relayout(newSpacing, newOriginX = this.originX, newOriginY = this.originY){
   if (newSpacing && newSpacing > 0) this.spacing = newSpacing;
-  this.originX = newOriginX;
-  this.originY = newOriginY;
+  this.originX = newOriginX;                     // <— NEW
+  this.originY = newOriginY;                     // <— NEW
 
+  // Recompute node positions
   for (const n of this.nodes){
     const {x,y} = this.xy(n.gx, n.gy);
     n.x = x; n.y = y;
   }
   const nodeById = new Map(this.nodes.map(n=>[n.id,n]));
+
+  // Recompute edge geometry (len, mid)
   for (const e of this.edges){
     const A = nodeById.get(e.a), B = nodeById.get(e.b);
     e.len = Math.hypot(B.x - A.x, B.y - A.y);
@@ -275,6 +278,7 @@ class PipeLevel {
     }
   }
 }
+
 
 
 
@@ -342,35 +346,24 @@ class Renderer {
   this.c.height = Math.max(1, Math.floor(rect.height * dpr));
   this.ctx.setTransform(dpr,0,0,dpr,0,0);
 
-  // --- Fit + center using true node span (cols-1, rows-1) ---
+  // Fit + center the grid
   const pad = this.level.pad || 1;
+  const neededCols = this.level.cols + pad*2;
+  const neededRows = this.level.rows + pad*2;
 
-  // Nodes occupy (cols-1) spacings horizontally, (rows-1) vertically.
-  // We add pad spacings as margin on each side -> + 2*pad.
-  const spanX = (this.level.cols - 1) + 2*pad;
-  const spanY = (this.level.rows - 1) + 2*pad;
-
-  const usableW = rect.width  * 0.95; // small margin
+  const usableW = rect.width * 0.95;   // small margin
   const usableH = rect.height * 0.95;
 
-  const sX = usableW / spanX;
-  const sY = usableH / spanY;
+  const sX = usableW / neededCols;
+  const sY = usableH / neededRows;
   const newSpacing = Math.floor(Math.max(24, Math.min(sX, sY)));
 
-  // Pixel size the content will take with that spacing
-  const contentW = spanX * newSpacing;
-  const contentH = spanY * newSpacing;
+  const contentW = neededCols * newSpacing;
+  const contentH = neededRows * newSpacing;
+  const originX = Math.round((rect.width  - contentW) / 2);   // <— center X
+  const originY = Math.round((rect.height - contentH) / 2);   // <— center Y
 
-  // Our xy() is: x = originX + (gx + pad) * spacing
-  // So the leftmost node appears at x = originX + pad*spacing.
-  // We want that to equal the left centering margin.
-  const leftMargin = (rect.width  - contentW) / 2;
-  const topMargin  = (rect.height - contentH) / 2;
-
-  const originX = Math.round(leftMargin  - pad * newSpacing);
-  const originY = Math.round(topMargin   - pad * newSpacing);
-
-  this.level.relayout(newSpacing, originX, originY);
+  this.level.relayout(newSpacing, originX, originY);          // <— apply both
   this.draw();
 }
 
