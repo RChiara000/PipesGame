@@ -116,6 +116,8 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 class PipeLevel {
   constructor(cols, rows, spacing, pad=1) {
     this.cols = cols; this.rows = rows; this.spacing = spacing; this.pad = pad;
+    this.originX = 0;         
+    this.originY = 0;         
     this.nodes = [];
     this.edges = [];
     this.sourceId = null;
@@ -125,8 +127,12 @@ class PipeLevel {
     this.solutionEdgeIds = new Set();
     this.solutionDiamonds = 0;
   }
-  xy(gx, gy){ return { x:(gx+this.pad)*this.spacing, y:(gy+this.pad)*this.spacing }; }
-  nodeId(gx, gy){ return `${gx},${gy}`; }
+  xy(gx, gy){
+    return {
+      x: this.originX + (gx + this.pad) * this.spacing,   // <— centered by origin
+      y: this.originY + (gy + this.pad) * this.spacing
+    };
+  }
 
   gen(levelNo=1) {
     this.levelNo = levelNo;
@@ -246,27 +252,33 @@ class PipeLevel {
     [...picked].forEach(i => { candidates[i].hasDiamond = true; });
   }
 
-  relayout(newSpacing){
-    if (!newSpacing || newSpacing <= 0) return;
-    this.spacing = newSpacing;
-    for (const n of this.nodes){
-      const {x,y} = this.xy(n.gx, n.gy);
-      n.x = x; n.y = y;
-    }
-    const nodeById = new Map(this.nodes.map(n=>[n.id,n]));
-    for (const e of this.edges){
-      const A = nodeById.get(e.a), B = nodeById.get(e.b);
-      e.len = Math.hypot(B.x - A.x, B.y - A.y);
-      e.mid = { x:(A.x+B.x)/2, y:(A.y+B.y)/2 };
-      if (e.curve){
-        const mx = (A.x+B.x)/2, my = (A.y+B.y)/2;
-        const dx = e.curve.cx - mx, dy = e.curve.cy - my;
-        const maxOff = this.spacing * 0.16;
-        const scale = Math.min(1, maxOff / Math.max(1, Math.hypot(dx,dy)));
-        e.curve = { cx: mx + dx*scale, cy: my + dy*scale };
-      }
+  relayout(newSpacing, newOriginX = this.originX, newOriginY = this.originY){
+  if (newSpacing && newSpacing > 0) this.spacing = newSpacing;
+  this.originX = newOriginX;                     // <— NEW
+  this.originY = newOriginY;                     // <— NEW
+
+  // Recompute node positions
+  for (const n of this.nodes){
+    const {x,y} = this.xy(n.gx, n.gy);
+    n.x = x; n.y = y;
+  }
+  const nodeById = new Map(this.nodes.map(n=>[n.id,n]));
+
+  // Recompute edge geometry (len, mid)
+  for (const e of this.edges){
+    const A = nodeById.get(e.a), B = nodeById.get(e.b);
+    e.len = Math.hypot(B.x - A.x, B.y - A.y);
+    e.mid = { x:(A.x+B.x)/2, y:(A.y+B.y)/2 };
+    if (e.curve){
+      const mx = (A.x+B.x)/2, my = (A.y+B.y)/2;
+      const dx = e.curve.cx - mx, dy = e.curve.cy - my;
+      const maxOff = this.spacing * 0.16;
+      const scale = Math.min(1, maxOff / Math.max(1, Math.hypot(dx,dy)));
+      e.curve = { cx: mx + dx*scale, cy: my + dy*scale };
     }
   }
+}
+
 
   // Gravity rule: flat or down (no up)
   allowedByGravity(nodeById, aId, bId){
@@ -325,32 +337,33 @@ class Renderer {
     this.resize();
   }
   resize(){
-    // Use wrapper rect; fall back to viewport if zero (some webviews)
-    let rect = this.wrap.getBoundingClientRect();
-    if (rect.height < 1 || rect.width < 1) {
-      rect = { width: window.innerWidth, height: window.innerHeight };
-    }
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.dpr = dpr;
-    this.c.width=Math.max(1, Math.floor(rect.width*dpr));
-    this.c.height=Math.max(1, Math.floor(rect.height*dpr));
-    this.ctx.setTransform(dpr,0,0,dpr,0,0);
+  const rect = this.c.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  this.dpr = dpr;
+  this.c.width  = Math.max(1, Math.floor(rect.width  * dpr));
+  this.c.height = Math.max(1, Math.floor(rect.height * dpr));
+  this.ctx.setTransform(dpr,0,0,dpr,0,0);
 
-    // Fit grid to canvas
-    const pad = this.level.pad || 1;
-    const neededCols = this.level.cols + pad*2;
-    const neededRows = this.level.rows + pad*2;
-    const usableW = rect.width * 0.95;
-    const usableH = rect.height * 0.95;
-    const sX = usableW / neededCols;
-    const sY = usableH / neededRows;
-    const newSpacing = Math.floor(Math.max(24, Math.min(sX, sY)));
-    if (Math.abs(newSpacing - this.level.spacing) > 0.5){
-      this.level.relayout(newSpacing);
-    }
+  // Fit + center the grid
+  const pad = this.level.pad || 1;
+  const neededCols = this.level.cols + pad*2;
+  const neededRows = this.level.rows + pad*2;
 
-    this.draw();
-  }
+  const usableW = rect.width * 0.95;   // small margin
+  const usableH = rect.height * 0.95;
+
+  const sX = usableW / neededCols;
+  const sY = usableH / neededRows;
+  const newSpacing = Math.floor(Math.max(24, Math.min(sX, sY)));
+
+  const contentW = neededCols * newSpacing;
+  const contentH = neededRows * newSpacing;
+  const originX = Math.round((rect.width  - contentW) / 2);   // <— center X
+  const originY = Math.round((rect.height - contentH) / 2);   // <— center Y
+
+  this.level.relayout(newSpacing, originX, originY);          // <— apply both
+  this.draw();
+}
   pointAt(a,b,curve,t){
     if (!curve) return {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t};
     const u=1-t, x=u*u*a.x + 2*u*t*curve.cx + t*t*b.x, y=u*u*a.y + 2*u*t*curve.cy + t*t*b.y;
