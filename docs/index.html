@@ -6,16 +6,34 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
 <title>Valves & Diamonds — Tablet Fit + Valve-First Flow</title>
 <style>
-  :root { --bg:#0b1020; --panel:#111831; --accent:#3ad0ff; --good:#28d17c; --text:#e8eefb; --sink:#6be3a3; }
+  :root { --bg:#0b1020; --panel:#111831; --accent:#3ad0ff; --good:#28d17c; --text:#e8eefb; --sink:#6be3a3; --vh:1vh; }
+
   * { box-sizing:border-box; }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
-              font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
-html, body { height:100%; }
-#app { height:100vh; }                 /* works everywhere */
-@supports (height: 100dvh) {
-  #app { height:100dvh; }              /* modern browsers */
-}
-html, body { height:100%; }  header { padding:6px 10px; background:linear-gradient(180deg,#0e1530,#0b1020); border-bottom:1px solid #1d2547; display:flex; gap:8px; align-items:center; }
+  html, body {
+    margin:0;
+    height:100%;
+    background:var(--bg);
+    color:var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+  }
+
+  /* Crucial: make the app a column flex so main can grow */
+  #app {
+    display:flex;
+    flex-direction:column;
+    min-height:calc(var(--vh) * 100);   /* iOS-safe fallback */
+  }
+  /* Prefer modern dvh when available */
+  @supports (height: 100dvh) {
+    #app { min-height:100dvh; }
+  }
+
+  header {
+    padding:6px 10px;
+    background:linear-gradient(180deg,#0e1530,#0b1020);
+    border-bottom:1px solid #1d2547;
+    display:flex; gap:8px; align-items:center;
+  }
   header h1 { font-size:14px; margin:0; color:var(--accent); font-weight:700; }
   .controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   button { background:#1a2346; border:1px solid #2a3570; color:#e8eefb; padding:6px 10px; border-radius:10px; font-weight:600; cursor:pointer; }
@@ -23,14 +41,19 @@ html, body { height:100%; }  header { padding:6px 10px; background:linear-gradie
   #flowRate { width:110px; }
   #hud { display:flex; gap:12px; align-items:center; margin-left:auto; font-size:13px; }
   #sinkStatus { padding:2px 8px; border:1px solid #2a3570; border-radius:999px; }
-  main { flex:1; min-height:0; display:grid; grid-template-columns: 1fr; }
-  #stageWrap { position:relative; overflow:hidden; }
+
+  /* Main must flex to fill the rest */
+  main { flex:1; min-height:0; display:flex; }
+  /* Stage wrapper must grow */
+  #stageWrap { position:relative; flex:1; min-height:0; overflow:hidden; }
+
   canvas {
     width:100%; height:100%; display:block;
     background:radial-gradient(1200px 1200px at 80% -10%, #17234a 0%, #0b1020 55%);
     touch-action: none;
   }
 
+  /* Overlay */
   .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(7,12,26,.6); }
   .overlay.hidden { display:none; }
   .overlay .panel { background:#0f1734; border:1px solid #26336b; border-radius:14px; padding:14px; min-width:280px; text-align:center; }
@@ -78,6 +101,15 @@ html, body { height:100%; }  header { padding:6px 10px; background:linear-gradie
 </div>
 
 <script>
+/* -------- iOS/Thunkable viewport height fix -------- */
+function setVH() {
+  // Some iOS webviews report vh including the title/URL bar; use innerHeight
+  document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+}
+setVH();
+window.addEventListener('resize', setVH);
+window.addEventListener('orientationchange', setVH);
+
 /* ============ Utility ============ */
 const randInt = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -86,8 +118,8 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 class PipeLevel {
   constructor(cols, rows, spacing, pad=1) {
     this.cols = cols; this.rows = rows; this.spacing = spacing; this.pad = pad;
-    this.nodes = []; // {id,gx,gy,x,y,edges:[],isSource,isSink}
-    this.edges = []; // {id,a,b,curve,valveOpen,hasDiamond,diamondTaken,diamondT,len,mid,t,dir,isChute,brightness}
+    this.nodes = [];
+    this.edges = [];
     this.sourceId = null;
     this.sinkId = null;
     this.levelNo = 1;
@@ -103,7 +135,6 @@ class PipeLevel {
     this.nodes=[]; this.edges=[]; this.sourceId=null; this.sinkId=null;
     this.solutionEdgeIds = new Set(); this.solutionDiamonds = 0;
 
-    // grid
     for (let gy=0; gy<this.rows; gy++){
       for (let gx=0; gx<this.cols; gx++){
         const {x,y} = this.xy(gx,gy);
@@ -132,18 +163,18 @@ class PipeLevel {
       nodeById.get(bId).edges.push(e.id);
     };
 
-    // source & sink in central column
+    // source & sink
     const sourceId=this.nodeId(this.chuteGX,0);
     const sinkId=this.nodeId(this.chuteGX,this.rows-1);
     nodeById.get(sourceId).isSource=true; this.sourceId=sourceId;
     nodeById.get(sinkId).isSink=true; this.sinkId=sinkId;
 
-    // central chute (open)
+    // central chute
     for (let gy=0; gy<this.rows-1; gy++){
       addEdge(this.nodeId(this.chuteGX,gy), this.nodeId(this.chuteGX,gy+1), true, true);
     }
 
-    // spanning tree (closed)
+    // spanning tree
     const visited = new Set([sourceId]);
     const stack = [sourceId];
     const neighborOrder = ([gx,gy]) => {
@@ -164,7 +195,7 @@ class PipeLevel {
       stack.push(nxt);
     }
 
-    // extra links scale by level (closed)
+    // extra links
     const L = this.levelNo;
     const complexity = clamp(0.6 + 0.12*(L-1), 0.6, 1.4);
     const extraH = Math.floor(this.cols*this.rows*0.20 * complexity);
@@ -196,14 +227,14 @@ class PipeLevel {
       }
     }
 
-    // a few more opens based on level
+    // some more opens
     const openProb = clamp(0.05 + 0.03*(this.levelNo-1), 0.05, 0.30);
     for (const e of this.edges){
       if (e.isChute) { e.valveOpen = true; continue; }
       if (!e.valveOpen && Math.random() < openProb) e.valveOpen = true;
     }
 
-    // diamonds along plausible source→sink routes
+    // diamonds on plausible routes
     const {forwardNodes, backwardNodes} = this.forwardBackwardSets(nodeById);
     const onSrcSinkPath = (e)=>{
       const A=nodeById.get(e.a), B=nodeById.get(e.b);
@@ -218,34 +249,26 @@ class PipeLevel {
   }
 
   relayout(newSpacing){
-  if (!newSpacing || newSpacing <= 0) return;
-  this.spacing = newSpacing;
-
-  // Recompute node positions
-  for (const n of this.nodes){
-    const {x,y} = this.xy(n.gx, n.gy);
-    n.x = x; n.y = y;
-  }
-  const nodeById = new Map(this.nodes.map(n=>[n.id,n]));
-
-  // Recompute edge geometry (len, mid)
-  for (const e of this.edges){
-    const A = nodeById.get(e.a), B = nodeById.get(e.b);
-    e.len = Math.hypot(B.x - A.x, B.y - A.y);
-    e.mid = { x:(A.x+B.x)/2, y:(A.y+B.y)/2 };
-    // Keep existing curve control relative to the mid-point distance
-    if (e.curve){
-      // Re-center the control a bit proportionally to spacing so curves scale nicely
-      const mx = (A.x+B.x)/2, my = (A.y+B.y)/2;
-      const dx = e.curve.cx - mx, dy = e.curve.cy - my;
-      // clamp curve offset to a fraction of spacing
-      const maxOff = this.spacing * 0.16;
-      const scale = Math.min(1, maxOff / Math.max(1, Math.hypot(dx,dy)));
-      e.curve = { cx: mx + dx*scale, cy: my + dy*scale };
+    if (!newSpacing || newSpacing <= 0) return;
+    this.spacing = newSpacing;
+    for (const n of this.nodes){
+      const {x,y} = this.xy(n.gx, n.gy);
+      n.x = x; n.y = y;
+    }
+    const nodeById = new Map(this.nodes.map(n=>[n.id,n]));
+    for (const e of this.edges){
+      const A = nodeById.get(e.a), B = nodeById.get(e.b);
+      e.len = Math.hypot(B.x - A.x, B.y - A.y);
+      e.mid = { x:(A.x+B.x)/2, y:(A.y+B.y)/2 };
+      if (e.curve){
+        const mx = (A.x+B.x)/2, my = (A.y+B.y)/2;
+        const dx = e.curve.cx - mx, dy = e.curve.cy - my;
+        const maxOff = this.spacing * 0.16;
+        const scale = Math.min(1, maxOff / Math.max(1, Math.hypot(dx,dy)));
+        e.curve = { cx: mx + dx*scale, cy: my + dy*scale };
+      }
     }
   }
-}
-   
 
   // Gravity rule: flat or down (no up)
   allowedByGravity(nodeById, aId, bId){
@@ -288,41 +311,48 @@ class Renderer {
   constructor(canvas, level, sim){
     this.c=canvas; this.ctx=canvas.getContext('2d'); this.level=level; this.sim=sim;
     this.dpr=1;
-    const ro = new ResizeObserver(()=>this.resize());
-    ro.observe(document.getElementById('stageWrap'));
-    window.addEventListener('orientationchange', ()=>this.resize(), {passive:true});
-    window.addEventListener('resize', ()=>this.resize(), {passive:true});
+    this.wrap = document.getElementById('stageWrap');
+
+    const safeResize = ()=>this.resize();
+
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(safeResize);
+      ro.observe(this.wrap);
+    }
+    window.addEventListener('orientationchange', safeResize, {passive:true});
+    window.addEventListener('resize', safeResize, {passive:true});
+    // Fallback: ensure at least one resize happens after load
+    window.setTimeout(safeResize, 0);
+
     this.resize();
   }
   resize(){
-  const rect = this.c.getBoundingClientRect();
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  this.dpr = dpr;
-  this.c.width = Math.max(1, Math.floor(rect.width * dpr));
-  this.c.height = Math.max(1, Math.floor(rect.height * dpr));
-  this.ctx.setTransform(dpr,0,0,dpr,0,0);
+    // Use wrapper rect; fall back to viewport if zero (some webviews)
+    let rect = this.wrap.getBoundingClientRect();
+    if (rect.height < 1 || rect.width < 1) {
+      rect = { width: window.innerWidth, height: window.innerHeight };
+    }
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.dpr = dpr;
+    this.c.width=Math.max(1, Math.floor(rect.width*dpr));
+    this.c.height=Math.max(1, Math.floor(rect.height*dpr));
+    this.ctx.setTransform(dpr,0,0,dpr,0,0);
 
-  // --- NEW: compute the largest spacing that fits the canvas ---
-  const pad = this.level.pad || 1;
-  const neededCols = this.level.cols + pad*2;
-  const neededRows = this.level.rows + pad*2;
+    // Fit grid to canvas
+    const pad = this.level.pad || 1;
+    const neededCols = this.level.cols + pad*2;
+    const neededRows = this.level.rows + pad*2;
+    const usableW = rect.width * 0.95;
+    const usableH = rect.height * 0.95;
+    const sX = usableW / neededCols;
+    const sY = usableH / neededRows;
+    const newSpacing = Math.floor(Math.max(24, Math.min(sX, sY)));
+    if (Math.abs(newSpacing - this.level.spacing) > 0.5){
+      this.level.relayout(newSpacing);
+    }
 
-  // leave a little breathing room (5%)
-  const usableW = rect.width * 0.95;
-  const usableH = rect.height * 0.95;
-
-  const sX = usableW / neededCols;
-  const sY = usableH / neededRows;
-  const newSpacing = Math.floor(Math.max(24, Math.min(sX, sY)));
-
-  // Only relayout if spacing actually changed (prevents jitter)
-  if (Math.abs(newSpacing - this.level.spacing) > 0.5){
-    this.level.relayout(newSpacing);
+    this.draw();
   }
-
-  this.draw();
-}
-
   pointAt(a,b,curve,t){
     if (!curve) return {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t};
     const u=1-t, x=u*u*a.x + 2*u*t*curve.cx + t*t*b.x, y=u*u*a.y + 2*u*t*curve.cy + t*t*b.y;
@@ -394,16 +424,14 @@ class Renderer {
   draw(){
     const ctx=this.ctx;
     ctx.clearRect(0,0,this.c.width,this.c.height);
-    // subtle grid
     ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.03)'; ctx.lineWidth=1;
-    const {width,height}=this.c.getBoundingClientRect(); const step=40;
+    const {width,height}=this.wrap.getBoundingClientRect();
+    const step=40;
     for (let x=0;x<width;x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,height); ctx.stroke(); }
     for (let y=0;y<height;y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(width,y); ctx.stroke(); }
     ctx.restore();
 
     const nodeById=new Map(this.level.nodes.map(n=>[n.id,n]));
-
-    // base pipes (chute first)
     for (const e of this.level.edges.filter(e=>e.isChute)){
       const a=nodeById.get(e.a), b=nodeById.get(e.b);
       this.drawPipeBase(a,b,e.curve,true);
@@ -412,34 +440,26 @@ class Renderer {
       const a=nodeById.get(e.a), b=nodeById.get(e.b);
       this.drawPipeBase(a,b,e.curve,false);
     }
-
-    // water for BOTH open and closed valves (partial fills stop at valve)
     for (const e of this.level.edges){
       const a=nodeById.get(e.a), b=nodeById.get(e.b);
       this.drawPipeFill(a,b,e.curve, e.t, e.dir||+1, e.brightness ?? 1);
     }
-
-    // diamonds
     for (const e of this.level.edges){
       if (!e.hasDiamond) continue;
       const a=nodeById.get(e.a), b=nodeById.get(e.b);
       const pos = this.pointAt(a,b,e.curve, e.diamondT);
       this.drawDiamondAt(pos, e.diamondTaken);
     }
-    // valves
     for (const e of this.level.edges){ this.drawValve(e.mid, e.valveOpen); }
-
-    // source + sink
     const src=nodeById.get(this.level.sourceId); if (src) this.drawSource(src);
     const sink=nodeById.get(this.level.sinkId); if (sink) this.drawSink(sink);
   }
 }
 
-/* ============ Flow (VALVE-FIRST, gravity-enforced, idle detector) ============ */
+/* ============ Flow (VALVE-FIRST, gravity, idle detector) ============ */
 class FlowSim {
   constructor(level){
     this.level=level;
-    // fronts: {eid, dir, t, intensity, stage:'toValve'|'waiting'|'toEnd', fromNode}
     this.active=[];
     this.running=false;
     this.paused=false;
@@ -447,9 +467,8 @@ class FlowSim {
     this.speed=1.2;
     this.collected=0;
     this.sinkReached=false;
-
     this.lastProgressMs = performance.now();
-    this.idleMs = 1000; // if stuck waiting at closed valves for >=1s -> stop & show overlay
+    this.idleMs = 1000;
   }
   reset(){
     this.active=[]; this.running=false; this.paused=false; this.started=false;
@@ -461,43 +480,34 @@ class FlowSim {
     document.getElementById('sinkReached').textContent = 'No';
     hideOverlay();
   }
-
-  // Branch from node to ALL connected valves (except immediate back-edge), obeying gravity
   spawnFromNode(nodeId, cameFromEdgeId=null, intensity=1){
     const nodeById=new Map(this.level.nodes.map(n=>[n.id,n]));
     const n=nodeById.get(nodeId); if (!n) return;
-
     const candidates = n.edges
       .map(id=>this.level.edges.find(e=>e.id===id))
-      .filter(e=>e && e.id!==cameFromEdgeId) // avoid ping-pong
+      .filter(e=>e && e.id!==cameFromEdgeId)
       .map(e=>{
         const dir = (e.a===n.id) ? +1 : -1;
         const from = n.id;
         const to = (dir===+1) ? e.b : e.a;
         return {e, dir, from, to};
       })
-      .filter(({e,from,to})=> this.level.allowedByGravity(nodeById, from, to)); // GRAVITY HERE
-
+      .filter(({from,to})=> this.level.allowedByGravity(nodeById, from, to));
     if (candidates.length===0) return;
-
     const share = intensity / candidates.length;
     for (const {e, dir} of candidates){
-      const startT = (dir===+1) ? 0 : 1;    // start at the node end
-      // first leg is always toward the valve at t=0.5
+      const startT = (dir===+1) ? 0 : 1;
       this.active.push({eid:e.id, dir, t:startT, intensity:share, stage:'toValve', fromNode:n.id});
     }
   }
-
   seed(){
     const nodeById=new Map(this.level.nodes.map(n=>[n.id,n]));
     const src=nodeById.get(this.level.sourceId); if (!src) return;
     this.started=true;
-    // Start from source to ALL connected valves (gravity enforced inside)
     this.spawnFromNode(src.id, null, 1);
     this.running=this.active.length>0;
     hideOverlay();
   }
-
   finish(){
     this.running=false;
     document.getElementById('finalScore').textContent = this.collected;
@@ -509,47 +519,33 @@ class FlowSim {
       `Recommended network targets ${diamondCount}/${level.edges.filter(e=>e.hasDiamond).length} diamonds.`;
     showOverlay();
   }
-
   step(dt){
     if (!this.running || this.paused) return;
     const nodeById=new Map(this.level.nodes.map(n=>[n.id,n]));
-    const next=[];
-    let progressed=false;
+    const next=[]; let progressed=false;
 
     for (const front of this.active){
       const e=this.level.edges.find(x=>x.id===front.eid); if (!e) continue;
 
-      // Handle waiting fronts at a closed valve: proceed when opened
       if (front.stage==='waiting'){
-        e.t=Math.max(e.t, 0.5);
-        e.dir=front.dir;
+        e.t=Math.max(e.t, 0.5); e.dir=front.dir;
         e.brightness=Math.max(e.brightness ?? 0, front.intensity ?? 1);
-        if (e.valveOpen){
-          front.stage='toEnd';
-          progressed=true;
-        }
-        next.push(front);
-        continue;
+        if (e.valveOpen){ front.stage='toEnd'; progressed=true; }
+        next.push(front); continue;
       }
 
-      // determine current target along this edge
       const target = (front.stage==='toValve') ? 0.5 : 1.0;
       const curParam = (front.dir===+1) ? front.t : (1-front.t);
       const len = e.len || 1;
-      const advance = (dt * 1.0 * this.speed) / len; // snappy visuals
+      const advance = (dt * 1.0 * this.speed) / len;
       const newParam = Math.min(target, curParam + advance);
-
       if (newParam > curParam + 1e-6) progressed=true;
-
-      // write back t in the edge-local param
       front.t = (front.dir===+1) ? newParam : (1 - newParam);
 
-      // visuals
       e.t = Math.max(e.t, Math.abs(newParam));
       e.dir = front.dir;
       e.brightness = Math.max(e.brightness ?? 0, front.intensity ?? 1);
 
-      // diamond pickup if passing the diamond point
       if (e.hasDiamond && !e.diamondTaken){
         const passParam = (front.dir===+1) ? front.t : (1-front.t);
         let crossed=false;
@@ -565,46 +561,27 @@ class FlowSim {
         if (crossed){ e.diamondTaken=true; this.collected++; progressed=true; updateHUD(); }
       }
 
-      // arrival?
       const arrived = Math.abs(newParam - target) < 1e-6 || newParam===target;
-      if (!arrived){
-        next.push(front);
-        continue;
-      }
+      if (!arrived){ next.push(front); continue; }
 
-      // handle arrival at valve or end
       if (front.stage==='toValve'){
         if (!e.valveOpen){
-          front.stage='waiting';
-          e.t=Math.max(e.t, 0.5);
-          next.push(front);
-        } else {
-          front.stage='toEnd';
-          next.push(front);
-        }
+          front.stage='waiting'; e.t=Math.max(e.t, 0.5); next.push(front);
+        } else { front.stage='toEnd'; next.push(front); }
       } else {
-        // reached far node -> mark filled and branch further (gravity enforced in spawnFromNode)
         e.filled=true;
         const reachNodeId = (front.dir===+1) ? e.b : e.a;
-
         if (!this.sinkReached && nodeById.get(reachNodeId)?.isSink){
-          this.sinkReached = true;
-          document.getElementById('sinkReached').textContent = 'Yes';
+          this.sinkReached = true; document.getElementById('sinkReached').textContent = 'Yes';
         }
-
-        // branch to all connected from this node, excluding the pipe we just came through
         this.spawnFromNode(reachNodeId, e.id, front.intensity);
         progressed=true;
       }
     }
 
     this.active=next;
-
     if (progressed) this.lastProgressMs = performance.now();
 
-    // Finish conditions:
-    //  A) no active fronts
-    //  B) all active fronts are waiting at closed valves AND we've been idle long enough
     const now = performance.now();
     const allWaitingClosed = this.active.length>0 && this.active.every(fr => {
       if (fr.stage!=='waiting') return false;
@@ -612,14 +589,8 @@ class FlowSim {
       return edge && !edge.valveOpen;
     });
 
-    if (this.active.length===0){
-      this.finish();
-      return;
-    }
-    if (allWaitingClosed && (now - this.lastProgressMs) >= this.idleMs){
-      this.finish();
-      return;
-    }
+    if (this.active.length===0){ this.finish(); return; }
+    if (allWaitingClosed && (now - this.lastProgressMs) >= this.idleMs){ this.finish(); return; }
   }
 }
 
@@ -752,20 +723,17 @@ overlayApplySol.addEventListener('click', ()=>{
   const {edgeSet, diamondCount} = computeRecommendedValveSet(level);
   level.solutionEdgeIds = edgeSet;
   level.solutionDiamonds = diamondCount;
-
-  // Open only chute + recommended edges; close the rest
   for (const e of level.edges){
     e.valveOpen = e.isChute || level.solutionEdgeIds.has(e.id);
     e.filled=false; e.t=0; e.diamondTaken=false; e.brightness=0;
   }
-  // Auto-run with corrected valves
   sim.reset(); updateHUD(); renderer.draw(); hideOverlay();
   sim.seed(); sim.paused=false; sim.running=true;
 });
 
 flowRate.addEventListener('input', ()=>{ sim.speed=Number(flowRate.value); });
 
-// Tap valves (open/close). If a front is waiting at this valve, it will continue next tick.
+// Tap valves
 function pointerXY(evt){
   const r=canvas.getBoundingClientRect();
   const x=(evt.clientX ?? evt.touches?.[0]?.clientX)-r.left;
