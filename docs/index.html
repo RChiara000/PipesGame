@@ -10,9 +10,10 @@
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
               font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
-#app { height:100vh; }
+html, body { height:100%; }
+#app { height:100vh; }                 /* works everywhere */
 @supports (height: 100dvh) {
-  #app { height:100dvh; }
+  #app { height:100dvh; }              /* modern browsers */
 }
 html, body { height:100%; }  header { padding:6px 10px; background:linear-gradient(180deg,#0e1530,#0b1020); border-bottom:1px solid #1d2547; display:flex; gap:8px; align-items:center; }
   header h1 { font-size:14px; margin:0; color:var(--accent); font-weight:700; }
@@ -216,6 +217,36 @@ class PipeLevel {
     [...picked].forEach(i => { candidates[i].hasDiamond = true; });
   }
 
+  relayout(newSpacing){
+  if (!newSpacing || newSpacing <= 0) return;
+  this.spacing = newSpacing;
+
+  // Recompute node positions
+  for (const n of this.nodes){
+    const {x,y} = this.xy(n.gx, n.gy);
+    n.x = x; n.y = y;
+  }
+  const nodeById = new Map(this.nodes.map(n=>[n.id,n]));
+
+  // Recompute edge geometry (len, mid)
+  for (const e of this.edges){
+    const A = nodeById.get(e.a), B = nodeById.get(e.b);
+    e.len = Math.hypot(B.x - A.x, B.y - A.y);
+    e.mid = { x:(A.x+B.x)/2, y:(A.y+B.y)/2 };
+    // Keep existing curve control relative to the mid-point distance
+    if (e.curve){
+      // Re-center the control a bit proportionally to spacing so curves scale nicely
+      const mx = (A.x+B.x)/2, my = (A.y+B.y)/2;
+      const dx = e.curve.cx - mx, dy = e.curve.cy - my;
+      // clamp curve offset to a fraction of spacing
+      const maxOff = this.spacing * 0.16;
+      const scale = Math.min(1, maxOff / Math.max(1, Math.hypot(dx,dy)));
+      e.curve = { cx: mx + dx*scale, cy: my + dy*scale };
+    }
+  }
+}
+   
+
   // Gravity rule: flat or down (no up)
   allowedByGravity(nodeById, aId, bId){
     const A=nodeById.get(aId), B=nodeById.get(bId);
@@ -264,14 +295,34 @@ class Renderer {
     this.resize();
   }
   resize(){
-    const rect=this.c.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.dpr = dpr;
-    this.c.width=Math.max(1, Math.floor(rect.width*dpr));
-    this.c.height=Math.max(1, Math.floor(rect.height*dpr));
-    this.ctx.setTransform(dpr,0,0,dpr,0,0);
-    this.draw();
+  const rect = this.c.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  this.dpr = dpr;
+  this.c.width = Math.max(1, Math.floor(rect.width * dpr));
+  this.c.height = Math.max(1, Math.floor(rect.height * dpr));
+  this.ctx.setTransform(dpr,0,0,dpr,0,0);
+
+  // --- NEW: compute the largest spacing that fits the canvas ---
+  const pad = this.level.pad || 1;
+  const neededCols = this.level.cols + pad*2;
+  const neededRows = this.level.rows + pad*2;
+
+  // leave a little breathing room (5%)
+  const usableW = rect.width * 0.95;
+  const usableH = rect.height * 0.95;
+
+  const sX = usableW / neededCols;
+  const sY = usableH / neededRows;
+  const newSpacing = Math.floor(Math.max(24, Math.min(sX, sY)));
+
+  // Only relayout if spacing actually changed (prevents jitter)
+  if (Math.abs(newSpacing - this.level.spacing) > 0.5){
+    this.level.relayout(newSpacing);
   }
+
+  this.draw();
+}
+
   pointAt(a,b,curve,t){
     if (!curve) return {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t};
     const u=1-t, x=u*u*a.x + 2*u*t*curve.cx + t*t*b.x, y=u*u*a.y + 2*u*t*curve.cy + t*t*b.y;
