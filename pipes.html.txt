@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+<title>Tangled Pipes – Valves & Gems</title>
+<style>
+  :root { --bg:#0b1020; --panel:#111831; --accent:#3ad0ff; --good:#28d17c; --warn:#ffcc00; --text:#e8eefb; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
+  #app { display:flex; flex-direction:column; height:100%; }
+  header { padding:10px 14px; background:linear-gradient(180deg,#0e1530,#0b1020); border-bottom:1px solid #1d2547; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.3px; color:var(--accent); font-weight:700; }
+  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button { background:#1a2346; border:1px solid #2a3570; color:var(--text); padding:8px 10px; border-radius:10px; font-weight:600; cursor:pointer; transition:transform .06s ease, background .2s; }
+  button:hover { background:#243062; }
+  button:active { transform:scale(.98); }
+  .badge { display:inline-flex; align-items:center; gap:6px; background:#121a35; border:1px solid #243062; padding:6px 10px; border-radius:10px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--good); box-shadow:0 0 8px #28d17c66; }
+  #flowRate { width:140px; }
+  #hud { display:flex; gap:10px; align-items:center; margin-left:auto; }
+  #hud .score { font-weight:800; color:var(--good); }
+  main { flex:1; display:grid; grid-template-columns: 1fr min(380px, 42vw); gap:0; min-height:0; }
+  #stageWrap { position:relative; overflow:hidden; }
+  canvas { width:100%; height:100%; display:block; background:radial-gradient(1200px 1200px at 80% -10%, #17234a 0%, #0b1020 55%); }
+  #sidebar { border-left:1px solid #1d2547; background:var(--panel); padding:12px 14px; overflow:auto; }
+  h2 { margin:8px 0; font-size:14px; color:#bcd3ff; text-transform:uppercase; letter-spacing:.14em; }
+  .card { background:#121a35; border:1px solid #243062; border-radius:12px; padding:12px; margin-bottom:10px; }
+  .legend { display:grid; grid-template-columns:auto 1fr; gap:6px 10px; align-items:center; font-size:13px; }
+  .swatch { width:18px; height:18px; border-radius:4px; border:1px solid #243062; }
+  .pipe { background:#82a0ff; }
+  .valveOpen { background:#28d17c; }
+  .valveClosed { background:#ff7b66; }
+  .water { background:#3ad0ff; }
+  .gem { background:#ffd166; }
+  .source { background:#94e6ff; }
+  footer { padding:8px 12px; font-size:12px; color:#a9b9e8; border-top:1px solid #1d2547; background:#0c132b; }
+  .small { opacity:.85; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>💧 Tangled Pipes – Valves & Gems</h1>
+    <div class="controls">
+      <button id="startBtn">Start</button>
+      <button id="pauseBtn">Pause</button>
+      <button id="resetBtn">Reset</button>
+      <button id="nextBtn">Next Level</button>
+      <span class="badge" title="Water speed">
+        <span class="dot"></span> Flow:
+        <input type="range" id="flowRate" min="0.5" max="3" step="0.1" value="1.2">
+      </span>
+    </div>
+    <div id="hud">
+      <span>Level: <strong id="levelNum">1</strong></span>
+      <span>Gems: <strong class="score" id="gemScore">0</strong>/<span id="gemTotal">0</span></span>
+    </div>
+  </header>
+  <main>
+    <div id="stageWrap">
+      <canvas id="stage" width="1200" height="800"></canvas>
+    </div>
+    <aside id="sidebar">
+      <h2>How it works</h2>
+      <div class="card small">
+        Open **valves** to route water from the **source** through the **pipes**.  
+        When water flows through a pipe containing a **gem**, you collect it.
+        Flow follows the network along **open** valves only.
+      </div>
+      <h2>Legend</h2>
+      <div class="card legend">
+        <div class="swatch source"></div><div>Source</div>
+        <div class="swatch water"></div><div>Water (flow front)</div>
+        <div class="swatch pipe"></div><div>Pipe</div>
+        <div class="swatch valveOpen"></div><div>Valve (open)</div>
+        <div class="swatch valveClosed"></div><div>Valve (closed)</div>
+        <div class="swatch gem"></div><div>Gem</div>
+      </div>
+      <h2>Try this</h2>
+      <div class="card small">
+        • Predict paths before starting.  
+        • Change the flow slider to see how speed affects travel time.  
+        • Count junctions: at tees, water splits across open valves.
+      </div>
+      <h2>Teacher tips</h2>
+      <div class="card small">
+        Discuss: continuity (splitting flow), resistance (closed valve = ∞), and path planning.
+      </div>
+    </aside>
+  </main>
+  <footer>
+    Tangled network is regenerated each level. Tap valves to toggle them before or during flow. Pipes are idealized (no losses), illustrating graph-based flow concepts.
+  </footer>
+</div>
+
+<script>
+/* ==================== Utility ==================== */
+const randInt = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const choice = arr => arr[Math.floor(Math.random() * arr.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ==================== Model ==================== */
+/*
+Graph on a grid:
+- Nodes at integer (gx, gy)
+- Edges connect 4-neighbors with bends/straights picked to tangle layout
+- Each edge has: valveOpen, hasGem, length, waterProgress (0..1), filled
+- We simulate "fronts" that propagate along open edges from the source
+*/
+class PipeLevel {
+  constructor(cols, rows, spacing, pad=2) {
+    this.cols = cols; this.rows = rows; this.spacing = spacing; this.pad = pad;
+    this.nodes = [];     // [{id,gx,gy,x,y,edges:[] , isSource?}]
+    this.edges = [];     // [{id,a,b,curve?, valveOpen, hasGem, filled, waterPos(0..len), len, mid, t, gemTaken}]
+    this.sourceId = null;
+    this.levelNo = 1;
+  }
+
+  xy(gx, gy) {
+    const x = (gx + this.pad) * this.spacing;
+    const y = (gy + this.pad) * this.spacing;
+    return {x,y};
+  }
+
+  nodeId(gx, gy) { return `${gx},${gy}`; }
+
+  gen(levelNo=1) {
+    this.levelNo = levelNo;
+    this.nodes = []; this.edges = []; this.sourceId = null;
+
+    // Make a subset of grid nodes (to create tangles with gaps)
+    const density = 0.75;
+    for (let gy=0; gy<this.rows; gy++) {
+      for (let gx=0; gx<this.cols; gx++) {
+        if (Math.random() < density) {
+          const {x,y} = this.xy(gx,gy);
+          this.nodes.push({ id:this.nodeId(gx,gy), gx, gy, x, y, edges:[], isSource:false });
+        }
+      }
+    }
+    const nodeById = new Map(this.nodes.map(n=>[n.id,n]));
+
+    // Helper to check if a node exists
+    const has = (gx,gy)=> nodeById.has(this.nodeId(gx,gy));
+
+    // Connect neighbors (up/down/left/right) with some randomness to create tangles
+    let eid = 0;
+    const addEdge = (a,b) => {
+      const A=nodeById.get(a), B=nodeById.get(b);
+      if (!A || !B) return;
+      const id = `e${eid++}`;
+      const dx=B.x-A.x, dy=B.y-A.y;
+      const len = Math.hypot(dx,dy);
+      // Random gentle curve control (for visuals only)
+      const curve = (Math.random()<0.5) ? null : {
+        cx:(A.x+B.x)/2 + (Math.random()<0.5?1:-1)*randInt(0, this.spacing*0.25),
+        cy:(A.y+B.y)/2 + (Math.random()<0.5?1:-1)*randInt(0, this.spacing*0.25)
+      };
+      const mid = {x:(A.x+B.x)/2, y:(A.y+B.y)/2};
+      const e = { id, a:A.id, b:B.id, curve, valveOpen: Math.random()<0.55, hasGem:false, gemTaken:false,
+                  filled:false, waterPos:0, len, mid, t:0 };
+      this.edges.push(e);
+      A.edges.push(id); B.edges.push(id);
+    };
+
+    for (const n of this.nodes) {
+      const {gx,gy} = n;
+      if (has(gx+1,gy) && Math.random()<0.9) addEdge(n.id, this.nodeId(gx+1,gy));
+      if (has(gx,gy+1) && Math.random()<0.9) addEdge(n.id, this.nodeId(gx,gy+1));
+      // sprinkle some extra cross-links
+      if (has(gx+1,gy+1) && Math.random()<0.2) addEdge(n.id, this.nodeId(gx+1,gy+1));
+      if (has(gx-1,gy+1) && Math.random()<0.2) addEdge(n.id, this.nodeId(gx-1,gy+1));
+    }
+
+    // Pick a source node near left/top
+    const candidates = this.nodes.filter(n=> n.gx < this.cols/3 || n.gy < this.rows/3);
+    const source = choice(candidates.length?candidates:this.nodes);
+    source.isSource = true;
+    this.sourceId = source.id;
+
+    // Drop gems on a subset of edges not adjacent to source
+    const selectable = this.edges.filter(e=>{
+      const nearSource = (e.a===this.sourceId || e.b===this.sourceId);
+      return !nearSource;
+    });
+    const gemCount = clamp(Math.round(selectable.length*0.18), 3, 15);
+    for (let i=0;i<gemCount;i++) {
+      const e = selectable[randInt(0,selectable.length-1)];
+      e.hasGem = true;
+    }
+  }
+}
+
+/* ==================== Renderer ==================== */
+class Renderer {
+  constructor(canvas, level) {
+    this.c = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.level = level;
+    this.dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    this.resize();
+    window.addEventListener('resize', ()=>this.resize());
+  }
+  resize() {
+    const rect = this.c.getBoundingClientRect();
+    this.c.width = rect.width * this.dpr;
+    this.c.height = rect.height * this.dpr;
+    this.ctx.setTransform(this.dpr,0,0,this.dpr,0,0);
+    this.draw();
+  }
+  drawPipe(a,b,curve,opts={}) {
+    const ctx=this.ctx;
+    ctx.save();
+    ctx.lineCap='round';
+    ctx.lineJoin='round';
+    ctx.lineWidth=10;
+    ctx.strokeStyle = opts.color || '#82a0ff';
+    ctx.beginPath();
+    ctx.moveTo(a.x,a.y);
+    if (curve) ctx.quadraticCurveTo(curve.cx, curve.cy, b.x, b.y);
+    else ctx.lineTo(b.x,b.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+  drawValve(mid, open) {
+    const ctx=this.ctx;
+    ctx.save();
+    ctx.lineWidth=2;
+    ctx.fillStyle = open ? '#28d17c' : '#ff7b66';
+    ctx.strokeStyle = '#0b1020';
+    ctx.beginPath();
+    ctx.arc(mid.x, mid.y, 9, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+    // glyph
+    ctx.beginPath();
+    if (open) { ctx.moveTo(mid.x-5,mid.y); ctx.lineTo(mid.x+5,mid.y); }
+    else { ctx.moveTo(mid.x-4,mid.y-4); ctx.lineTo(mid.x+4,mid.y+4); }
+    ctx.strokeStyle='#061022';
+    ctx.lineWidth=2;
+    ctx.stroke();
+    ctx.restore();
+  }
+  drawGem(mid, taken) {
+    const ctx=this.ctx;
+    const r=7;
+    ctx.save();
+    ctx.translate(mid.x, mid.y-2);
+    ctx.rotate(Math.PI/4);
+    ctx.fillStyle = taken ? '#bda35b' : '#ffd166';
+    ctx.strokeStyle = '#775e1c';
+    ctx.lineWidth=1.5;
+    ctx.beginPath();
+    ctx.rect(-r, -r, 2*r, 2*r);
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  drawSource(node) {
+    const ctx=this.ctx;
+    ctx.save();
+    ctx.fillStyle = '#94e6ff';
+    ctx.strokeStyle = '#173b68';
+    ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(node.x,node.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  drawWaterFront(a,b,curve,t) {
+    // t in [0,1] along the edge
+    const pos = (curve)
+      ? quadPoint(a, curve, b, t)
+      : { x: a.x + (b.x-a.x)*t, y: a.y+(b.y-a.y)*t };
+    const ctx=this.ctx;
+    ctx.save();
+    ctx.fillStyle='#3ad0ff';
+    ctx.beginPath(); ctx.arc(pos.x,pos.y,6,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+  draw() {
+    const ctx=this.ctx;
+    ctx.clearRect(0,0,this.c.width,this.c.height);
+    // background grid subtle
+    this.drawGrid();
+
+    const nodeById = new Map(this.level.nodes.map(n=>[n.id,n]));
+    // pipes
+    for (const e of this.level.edges) {
+      const a=nodeById.get(e.a), b=nodeById.get(e.b);
+      this.drawPipe(a,b,e.curve);
+    }
+    // gems & valves
+    for (const e of this.level.edges) {
+      if (e.hasGem) this.drawGem(e.mid, e.gemTaken);
+      this.drawValve(e.mid, e.valveOpen);
+    }
+    // source
+    const source = nodeById.get(this.level.sourceId);
+    if (source) this.drawSource(source);
+
+    // water fronts
+    for (const e of this.level.edges) {
+      if (e.t>0 && e.t<1 && e.valveOpen) {
+        const a=nodeById.get(e.a), b=nodeById.get(e.b);
+        this.drawWaterFront(a,b,e.curve,e.t);
+      }
+    }
+  }
+  drawGrid() {
+    const ctx=this.ctx;
+    ctx.save();
+    ctx.strokeStyle='rgba(255,255,255,0.03)';
+    ctx.lineWidth=1;
+    const step=40; const {width,height}=this.c.getBoundingClientRect();
+    for (let x=0;x<width;x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,height); ctx.stroke(); }
+    for (let y=0;y<height;y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(width,y); ctx.stroke(); }
+    ctx.restore();
+  }
+}
+// Quadratic Bezier helper
+function quadPoint(p0, p1, p2, t) {
+  const u=1-t;
+  const x=u*u*p0.x + 2*u*t*p1.cx + t*t*p2.x;
+  const y=u*u*p0.y + 2*u*t*p1.cy + t*t*p2.y;
+  return {x,y};
+}
+
+/* ==================== Simulation ==================== */
+/*
+Simple graph flow:
+- Maintain an active queue of (edgeId, dir, t). dir: 1 means a->b, -1 means b->a
+- Starts from source node: enqueue all open edges from source
+- Each tick: advance t by dt/len*speed; when t>=1, mark edge filled, collect gem, then enqueue next edges from the reached node (excluding where we came from), but only those with valveOpen
+- This models an idealized front without capacity limits, good for educational puzzles
+*/
+class FlowSim {
+  constructor(level) {
+    this.level = level;
+    this.active = []; // {eid, dir, t}
+    this.visited = new Set(); // edges visited
+    this.running = false;
+    this.speed = 1.2; // UI slider multiplier
+    this.collected = 0;
+  }
+  reset() {
+    this.active = [];
+    this.visited.clear();
+    this.running = false;
+    this.collected = 0;
+    for (const e of this.level.edges) { e.filled=false; e.t=0; e.waterPos=0; e.gemTaken=false; }
+  }
+  seed() {
+    const nodeById = new Map(this.level.nodes.map(n=>[n.id,n]));
+    const source = nodeById.get(this.level.sourceId);
+    if (!source) return;
+    // add all open edges from source
+    for (const eid of source.edges) {
+      const e = this.level.edges.find(x=>x.id===eid);
+      if (e && e.valveOpen) {
+        const dir = (e.a===source.id) ? +1 : -1;
+        this.active.push({eid:e.id, dir, t:0});
+      }
+    }
+    this.running = true;
+  }
+  step(dt) {
+    if (!this.running) return;
+    const nodeById = new Map(this.level.nodes.map(n=>[n.id,n]));
+    const next = [];
+    for (const front of this.active) {
+      const e = this.level.edges.find(x=>x.id===front.eid);
+      if (!e || !e.valveOpen) continue;
+      const len = e.len || 1;
+      const advance = (dt * 0.25 * this.speed) / len; // normalize by length
+      front.t += advance;
+      e.t = front.t;
+      if (front.t >= 1) {
+        e.filled = true; e.t = 1;
+        if (e.hasGem && !e.gemTaken) {
+          e.gemTaken = true;
+          this.collected++;
+          updateHUD();
+        }
+        // Enqueue neighbors from the reached node
+        const reachNodeId = (front.dir === +1) ? e.b : e.a;
+        const fromNodeId  = (front.dir === +1) ? e.a : e.b;
+        const reachNode = nodeById.get(reachNodeId);
+        for (const nidEdgeId of reachNode.edges) {
+          if (nidEdgeId === e.id) continue; // don't immediately go back
+          const ne = this.level.edges.find(x=>x.id===nidEdgeId);
+          if (ne && ne.valveOpen) {
+            const dir = (ne.a===reachNodeId) ? +1 : -1;
+            next.push({eid: ne.id, dir, t:0});
+          }
+        }
+      } else {
+        next.push(front);
+      }
+    }
+    this.active = next;
+    if (this.active.length === 0) this.running = false;
+  }
+}
+
+/* ==================== Input (hit testing valves) ==================== */
+function hitValve(level, x, y) {
+  // Find the closest valve (edge.mid) within radius
+  const r = 12;
+  let hit = null, d2min = r*r;
+  for (const e of level.edges) {
+    const dx = x - e.mid.x, dy = y - e.mid.y;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < d2min) { d2min = d2; hit = e; }
+  }
+  return hit;
+}
+
+/* ==================== Wire up everything ==================== */
+const canvas = document.getElementById('stage');
+const level = new PipeLevel(10, 8, 70);
+level.gen(1);
+const sim = new FlowSim(level);
+const renderer = new Renderer(canvas, level);
+
+const levelNumEl = document.getElementById('levelNum');
+const gemScoreEl = document.getElementById('gemScore');
+const gemTotalEl = document.getElementById('gemTotal');
+const startBtn = document.getElementById('startBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const resetBtn = document.getElementById('resetBtn');
+const nextBtn = document.getElementById('nextBtn');
+const flowRate = document.getElementById('flowRate');
+
+function updateHUD() {
+  const total = level.edges.filter(e=>e.hasGem).length;
+  gemTotalEl.textContent = total;
+  gemScoreEl.textContent = sim.collected;
+}
+updateHUD();
+
+let last = performance.now();
+function tick(t) {
+  const dt = (t - last) / 16.67; // ~ frames (60fps base)
+  last = t;
+  sim.step(dt);
+  renderer.draw();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+// Controls
+startBtn.addEventListener('click', ()=>{
+  if (!sim.running && sim.active.length===0) sim.seed();
+  sim.running = true;
+});
+pauseBtn.addEventListener('click', ()=>{ sim.running = false; });
+resetBtn.addEventListener('click', ()=>{
+  sim.reset();
+  updateHUD();
+});
+nextBtn.addEventListener('click', ()=>{
+  const n = Number(levelNumEl.textContent||"1")+1;
+  level.gen(n);
+  levelNumEl.textContent = n;
+  sim.reset();
+  updateHUD();
+  renderer.draw();
+});
+flowRate.addEventListener('input', ()=>{
+  sim.speed = Number(flowRate.value);
+});
+
+// Tap valves
+function pointerXY(evt) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (evt.clientX ?? evt.touches?.[0]?.clientX) - rect.left;
+  const y = (evt.clientY ?? evt.touches?.[0]?.clientY) - rect.top;
+  return {x,y};
+}
+const toggleValve = (evt)=>{
+  evt.preventDefault();
+  const {x,y} = pointerXY(evt);
+  const e = hitValve(level, x, y);
+  if (e) {
+    e.valveOpen = !e.valveOpen;
+  }
+};
+canvas.addEventListener('click', toggleValve);
+canvas.addEventListener('touchstart', toggleValve, {passive:false});
+
+// Start with a paused board
+sim.reset();
+renderer.draw();
+</script>
+</body>
+</html>
