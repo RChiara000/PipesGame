@@ -10,8 +10,11 @@
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
               font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
-  #app { display:flex; flex-direction:column; height:100dvh; }
-  header { padding:6px 10px; background:linear-gradient(180deg,#0e1530,#0b1020); border-bottom:1px solid #1d2547; display:flex; gap:8px; align-items:center; }
+#app { height:100vh; }
+@supports (height: 100dvh) {
+  #app { height:100dvh; }
+}
+html, body { height:100%; }  header { padding:6px 10px; background:linear-gradient(180deg,#0e1530,#0b1020); border-bottom:1px solid #1d2547; display:flex; gap:8px; align-items:center; }
   header h1 { font-size:14px; margin:0; color:var(--accent); font-weight:700; }
   .controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   button { background:#1a2346; border:1px solid #2a3570; color:#e8eefb; padding:6px 10px; border-radius:10px; font-weight:600; cursor:pointer; }
