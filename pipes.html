@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+<title>Tangled Pipes – Valves & Gems (simpler & visible flow)</title>
+<style>
+  :root { --bg:#0b1020; --panel:#111831; --accent:#3ad0ff; --good:#28d17c; --warn:#ffcc00; --text:#e8eefb; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
+  #app { display:flex; flex-direction:column; height:100%; }
+  header { padding:10px 14px; background:linear-gradient(180deg,#0e1530,#0b1020); border-bottom:1px solid #1d2547; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.3px; color:var(--accent); font-weight:700; }
+  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button { background:#1a2346; border:1px solid #2a3570; color:var(--text); padding:8px 10px; border-radius:10px; font-weight:600; cursor:pointer; transition:transform .06s ease, background .2s; }
+  button:hover { background:#243062; }
+  button:active { transform:scale(.98); }
+  .badge { display:inline-flex; align-items:center; gap:6px; background:#121a35; border:1px solid #243062; padding:6px 10px; border-radius:10px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--good); box-shadow:0 0 8px #28d17c66; }
+  #flowRate { width:140px; }
+  #hud { display:flex; gap:10px; align-items:center; margin-left:auto; }
+  #hud .score { font-weight:800; color:var(--good); }
+  main { flex:1; display:grid; grid-template-columns: 1fr min(360px, 42vw); gap:0; min-height:0; }
+  #stageWrap { position:relative; overflow:hidden; }
+  canvas { width:100%; height:100%; display:block; background:radial-gradient(1200px 1200px at 80% -10%, #17234a 0%, #0b1020 55%); }
+  #sidebar { border-left:1px solid #1d2547; background:var(--panel); padding:12px 14px; overflow:auto; }
+  h2 { margin:8px 0; font-size:14px; color:#bcd3ff; text-transform:uppercase; letter-spacing:.14em; }
+  .card { background:#121a35; border:1px solid #243062; border-radius:12px; padding:12px; margin-bottom:10px; }
+  .legend { display:grid; grid-template-columns:auto 1fr; gap:6px 10px; align-items:center; font-size:13px; }
+  .swatch { width:18px; height:18px; border-radius:4px; border:1px solid #243062; }
+  .pipe { background:#82a0ff; }
+  .valveOpen { background:#28d17c; }
+  .valveClosed { background:#ff7b66; }
+  .water { background:#3ad0ff; }
+  .gem { background:#ffd166; }
+  .source { background:#94e6ff; }
+  footer { padding:8px 12px; font-size:12px; color:#a9b9e8; border-top:1px solid #1d2547; background:#0c132b; }
+  .small { opacity:.85; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>💧 Tangled Pipes – Valves & Gems</h1>
+    <div class="controls">
+      <button id="startBtn">Start</button>
+      <button id="pauseBtn">Pause</button>
+      <button id="resetBtn">Reset</button>
+      <button id="nextBtn">Next Level</button>
+      <span class="badge" title="Water speed">
+        <span class="dot"></span> Flow:
+        <input type="range" id="flowRate" min="0.5" max="3" step="0.1" value="1.2">
+      </span>
+    </div>
+    <div id="hud">
+      <span>Level: <strong id="levelNum">1</strong></span>
+      <span>Gems: <strong class="score" id="gemScore">0</strong>/<span id="gemTotal">0</span></span>
+    </div>
+  </header>
+  <main>
+    <div id="stageWrap">
+      <canvas id="stage" width="1200" height="800"></canvas>
+    </div>
+    <aside id="sidebar">
+      <h2>How it works</h2>
+      <div class="card small">
+        Open valves to route water from the source through the pipes.  
+        Water visibly fills open pipes; passing over a gem collects it.
+      </div>
+      <h2>Legend</h2>
+      <div class="card legend">
+        <div class="swatch source"></div><div>Source</div>
+        <div class="swatch water"></div><div>Water (filling)</div>
+        <div class="swatch pipe"></div><div>Pipe</div>
+        <div class="swatch valveOpen"></div><div>Valve (open)</div>
+        <div class="swatch valveClosed"></div><div>Valve (closed)</div>
+        <div class="swatch gem"></div><div>Gem</div>
+      </div>
+      <h2>Try this</h2>
+      <div class="card small">
+        • Toggle a few valves, hit Start, and watch the blue fill advance.  
+        • Increase Flow to see faster filling.  
+        • Aim water toward gems to collect them.
+      </div>
+    </aside>
+  </main>
+  <footer>
+    Pipes are idealized (no losses). This version uses a simpler network and shows water filling along each open pipe.
+  </footer>
+</div>
+
+<script>
+/* ==================== Utility ==================== */
+const randInt = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const choice = arr => arr[Math.floor(Math.random() * arr.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ==================== Model (slightly simpler network) ==================== */
+class PipeLevel {
+  constructor(cols, rows, spacing, pad=2) {
+    this.cols = cols; this.rows = rows; this.spacing = spacing; this.pad = pad;
+    this.nodes = [];
+    this.edges = [];
+    this.sourceId = null;
+    this.levelNo = 1;
+  }
+  xy(gx, gy) {
+    const x = (gx + this.pad) * this.spacing;
+    const y = (gy + this.pad) * this.spacing;
+    return {x,y};
+  }
+  nodeId(gx, gy) { return `${gx},${gy}`; }
+
+  gen(levelNo=1) {
+    this.levelNo = levelNo;
+    this.nodes = []; this.edges = []; this.sourceId = null;
+
+    // ↓ reduced density a touch
+    const density = 0.65; // was 0.75
+    for (let gy=0; gy<this.rows; gy++) {
+      for (let gx=0; gx<this.cols; gx++) {
+        if (Math.random() < density) {
+          const {x,y} = this.xy(gx,gy);
+          this.nodes.push({ id:this.nodeId(gx,gy), gx, gy, x, y, edges:[], isSource:false });
+        }
+      }
+    }
+    const nodeById = new Map(this.nodes.map(n=>[n.id,n]));
+    const has = (gx,gy)=> nodeById.has(this.nodeId(gx,gy));
+
+    let eid = 0;
+    const addEdge = (a,b) => {
+      const A=nodeById.get(a), B=nodeById.get(b);
+      if (!A || !B) return;
+      // Limit degree to keep things cleaner
+      if (A.edges.length >= 3 || B.edges.length >= 3) return;
+
+      const id = `e${eid++}`;
+      const dx=B.x-A.x, dy=B.y-A.y;
+      const len = Math.hypot(dx,dy);
+      const curve = (Math.random()<0.4) ? null : {
+        cx:(A.x+B.x)/2 + (Math.random()<0.5?1:-1)*randInt(0, this.spacing*0.2),
+        cy:(A.y+B.y)/2 + (Math.random()<0.5?1:-1)*randInt(0, this.spacing*0.2)
+      };
+      const mid = {x:(A.x+B.x)/2, y:(A.y+B.y)/2};
+      const e = { id, a:A.id, b:B.id, curve,
+        valveOpen: Math.random()<0.6,
+        hasGem:false, gemTaken:false,
+        filled:false, // fully filled once t>=1
+        len, mid,
+        // rendering progress (0..1) from the start side for visible fill
+        t:0,
+        // track direction we started from (+1 means a->b, -1 b->a)
+        dir:+1
+      };
+      this.edges.push(e);
+      A.edges.push(id); B.edges.push(id);
+    };
+
+    for (const n of this.nodes) {
+      const {gx,gy} = n;
+      // ↓ slightly lower connection probs
+      if (has(gx+1,gy) && Math.random()<0.8) addEdge(n.id, this.nodeId(gx+1,gy));
+      if (has(gx,gy+1) && Math.random()<0.8) addEdge(n.id, this.nodeId(gx,gy+1));
+      if (has(gx+1,gy+1) && Math.random()<0.12) addEdge(n.id, this.nodeId(gx+1,gy+1));
+      if (has(gx-1,gy+1) && Math.random()<0.12) addEdge(n.id, this.nodeId(gx-1,gy+1));
+    }
+
+    // Source near left/top
+    const candidates = this.nodes.filter(n=> n.gx < this.cols/3 || n.gy < this.rows/3);
+    const source = choice(candidates.length?candidates:this.nodes);
+    if (source) {
+      source.isSource = true;
+      this.sourceId = source.id;
+    }
+
+    // Gems: avoid edges adjacent to source
+    const selectable = this.edges.filter(e=>!(e.a===this.sourceId || e.b===this.sourceId));
+    const gemCount = clamp(Math.round(selectable.length*0.18), 3, 12);
+    for (let i=0;i<gemCount;i++) {
+      const e = selectable[randInt(0,selectable.length-1)];
+      e.hasGem = true;
+    }
+  }
+}
+
+/* ==================== Renderer (visible fill) ==================== */
+class Renderer {
+  constructor(canvas, level, sim) {
+    this.c = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.level = level;
+    this.sim = sim;
+    this.dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    this.resize();
+    window.addEventListener('resize', ()=>this.resize());
+  }
+  resize() {
+    const rect = this.c.getBoundingClientRect();
+    this.c.width = rect.width * this.dpr;
+    this.c.height = rect.height * this.dpr;
+    this.ctx.setTransform(this.dpr,0,0,this.dpr,0,0);
+    this.draw();
+  }
+  drawPipeBase(a,b,curve) {
+    const ctx=this.ctx;
+    ctx.save();
+    ctx.lineCap='round';
+    ctx.lineJoin='round';
+    ctx.lineWidth=10;
+    ctx.strokeStyle = '#5f79d9'; // base pipe
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.moveTo(a.x,a.y);
+    if (curve) ctx.quadraticCurveTo(curve.cx, curve.cy, b.x, b.y);
+    else ctx.lineTo(b.x,b.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+  drawPipeFill(a,b,curve,t,dir) {
+    if (t<=0) return;
+    const ctx=this.ctx;
+    const steps = Math.ceil(24 * t); // smooth fill segments
+    ctx.save();
+    ctx.lineCap='round';
+    ctx.lineJoin='round';
+    ctx.lineWidth=10;
+    ctx.strokeStyle = '#3ad0ff';
+    ctx.shadowColor = '#3ad0ff';
+    ctx.shadowBlur = 6;
+
+    // Draw many tiny segments from start toward t to look like a continuous fill
+    let last = this.pointAt(a,b,curve, dir===+1 ? 0 : 1);
+    for (let i=1;i<=steps;i++){
+      const tt = (i/steps)*t;
+      const param = dir===+1 ? tt : (1-tt);
+      const p = this.pointAt(a,b,curve,param);
+      ctx.beginPath();
+      ctx.moveTo(last.x,last.y);
+      ctx.lineTo(p.x,p.y);
+      ctx.stroke();
+      last = p;
+    }
+    ctx.restore();
+  }
+  pointAt(a,b,curve,t) {
+    if (!curve) return { x: a.x + (b.x-a.x)*t, y: a.y+(b.y-a.y)*t };
+    const u=1-t;
+    const x=u*u*a.x + 2*u*t*curve.cx + t*t*b.x;
+    const y=u*u*a.y + 2*u*t*curve.cy + t*t*b.y;
+    return {x,y};
+  }
+  drawValve(mid, open) {
+    const ctx=this.ctx;
+    ctx.save();
+    ctx.lineWidth=2;
+    ctx.fillStyle = open ? '#28d17c' : '#ff7b66';
+    ctx.strokeStyle = '#0b1020';
+    ctx.beginPath();
+    ctx.arc(mid.x, mid.y, 9, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    if (open) { ctx.moveTo(mid.x-5,mid.y); ctx.lineTo(mid.x+5,mid.y); }
+    else { ctx.moveTo(mid.x-4,mid.y-4); ctx.lineTo(mid.x+4,mid.y+4); }
+    ctx.strokeStyle='#061022';
+    ctx.lineWidth=2;
+    ctx.stroke();
+    ctx.restore();
+  }
+  drawGem(mid, taken) {
+    const ctx=this.ctx, r=7;
+    ctx.save();
+    ctx.translate(mid.x, mid.y-2);
+    ctx.rotate(Math.PI/4);
+    ctx.fillStyle = taken ? '#bda35b' : '#ffd166';
+    ctx.strokeStyle = '#775e1c';
+    ctx.lineWidth=1.5;
+    ctx.beginPath();
+    ctx.rect(-r, -r, 2*r, 2*r);
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  drawSource(node) {
+    const ctx=this.ctx;
+    ctx.save();
+    ctx.fillStyle = '#94e6ff';
+    ctx.strokeStyle = '#173b68';
+    ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(node.x,node.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  drawGrid() {
+    const ctx=this.ctx;
+    ctx.save();
+    ctx.strokeStyle='rgba(255,255,255,0.03)';
+    ctx.lineWidth=1;
+    const step=40; const {width,height}=this.c.getBoundingClientRect();
+    for (let x=0;x<width;x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,height); ctx.stroke(); }
+    for (let y=0;y<height;y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(width,y); ctx.stroke(); }
+    ctx.restore();
+  }
+  draw() {
+    const ctx=this.ctx;
+    ctx.clearRect(0,0,this.c.width,this.c.height);
+    this.drawGrid();
+
+    const nodeById = new Map(this.level.nodes.map(n=>[n.id,n]));
+
+    // 1) base pipes
+    for (const e of this.level.edges) {
+      const a=nodeById.get(e.a), b=nodeById.get(e.b);
+      this.drawPipeBase(a,b,e.curve);
+    }
+
+    // 2) visible water fill on open edges
+    for (const e of this.level.edges) {
+      if (!e.valveOpen) continue;
+      const a=nodeById.get(e.a), b=nodeById.get(e.b);
+      this.drawPipeFill(a,b,e.curve, e.t, e.dir || +1);
+    }
+
+    // 3) gems and valves
+    for (const e of this.level.edges) {
+      if (e.hasGem) this.drawGem(e.mid, e.gemTaken);
+      this.drawValve(e.mid, e.valveOpen);
+    }
+
+    // 4) source
+    const source = nodeById.get(this.level.sourceId);
+    if (source) this.drawSource(source);
+  }
+}
+
+/* ==================== Simulation (advances fill t) ==================== */
+class FlowSim {
+  constructor(level) {
+    this.level = level;
+    this.active = []; // {eid, dir, t}
+    this.running = false;
+    this.speed = 1.2;
+    this.collected = 0;
+  }
+  reset() {
+    this.active = [];
+    this.running = false;
+    this.collected = 0;
+    for (const e of this.level.edges) {
+      e.filled=false; e.t=0; e.gemTaken=false; e.dir=+1;
+    }
+  }
+  seed() {
+    const nodeById = new Map(this.level.nodes.map(n=>[n.id,n]));
+    const source = nodeById.get(this.level.sourceId);
+    if (!source) return;
+    for (const eid of source.edges) {
+      const e = this.level.edges.find(x=>x.id===eid);
+      if (e && e.valveOpen) {
+        const dir = (e.a===source.id) ? +1 : -1;
+        e.dir = dir;
+        this.active.push({eid:e.id, dir, t:0});
+      }
+    }
+    this.running = true;
+  }
+  step(dt) {
+    if (!this.running) return;
+    const nodeById = new Map(this.level.nodes.map(n=>[n.id,n]));
+    const next = [];
+    for (const front of this.active) {
+      const e = this.level.edges.find(x=>x.id===front.eid);
+      if (!e || !e.valveOpen) continue;
+      const len = e.len || 1;
+      const advance = (dt * 0.35 * this.speed) / len; // slightly faster base so fill is obvious
+      front.t = Math.min(1, front.t + advance);
+      e.t = Math.max(e.t, front.t); // keep max progress per edge for rendering
+      e.dir = front.dir;
+
+      if (front.t >= 1) {
+        e.filled = true;
+        if (e.hasGem && !e.gemTaken) {
+          e.gemTaken = true;
+          this.collected++;
+          updateHUD();
+        }
+        // Branch to neighbors from reached node
+        const reachNodeId = (front.dir === +1) ? e.b : e.a;
+        const reachNode = nodeById.get(reachNodeId);
+        for (const nidEdgeId of reachNode.edges) {
+          if (nidEdgeId === e.id) continue;
+          const ne = this.level.edges.find(x=>x.id===nidEdgeId);
+          if (ne && ne.valveOpen) {
+            const dir = (ne.a===reachNodeId) ? +1 : -1;
+            next.push({eid: ne.id, dir, t:0});
+          }
+        }
+      } else {
+        next.push(front);
+      }
+    }
+    this.active = next;
+    if (this.active.length === 0) this.running = false;
+  }
+}
+
+/* ==================== Input (toggle valves) ==================== */
+function hitValve(level, x, y) {
+  const r = 12;
+  let hit = null, d2min = r*r;
+  for (const e of level.edges) {
+    const dx = x - e.mid.x, dy = y - e.mid.y;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < d2min) { d2min = d2; hit = e; }
+  }
+  return hit;
+}
+
+/* ==================== Wire-up ==================== */
+// Slightly smaller grid and spacing for fewer pipes overall
+const canvas = document.getElementById('stage');
+const level = new PipeLevel(9, 7, 76); // was 10x8, spacing 70
+level.gen(1);
+
+const sim = new FlowSim(level);
+const renderer = new Renderer(canvas, level, sim);
+
+const levelNumEl = document.getElementById('levelNum');
+const gemScoreEl = document.getElementById('gemScore');
+const gemTotalEl = document.getElementById('gemTotal');
+const startBtn = document.getElementById('startBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const resetBtn = document.getElementById('resetBtn');
+const nextBtn = document.getElementById('nextBtn');
+const flowRate = document.getElementById('flowRate');
+
+function updateHUD() {
+  const total = level.edges.filter(e=>e.hasGem).length;
+  gemTotalEl.textContent = total;
+  gemScoreEl.textContent = sim.collected;
+}
+updateHUD();
+
+let last = performance.now();
+function tick(t) {
+  const dt = (t - last) / 16.67; // ~60fps ticks
+  last = t;
+  sim.step(dt);
+  renderer.draw();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+// Controls
+startBtn.addEventListener('click', ()=>{
+  if (!sim.running && sim.active.length===0) sim.seed();
+  sim.running = true;
+});
+pauseBtn.addEventListener('click', ()=>{ sim.running = false; });
+resetBtn.addEventListener('click', ()=>{
+  sim.reset();
+  updateHUD();
+});
+nextBtn.addEventListener('click', ()=>{
+  const n = Number(levelNumEl.textContent||"1")+1;
+  level.gen(n);
+  levelNumEl.textContent = n;
+  sim.reset();
+  updateHUD();
+  renderer.draw();
+});
+flowRate.addEventListener('input', ()=>{ sim.speed = Number(flowRate.value); });
+
+// Tap valves
+function pointerXY(evt) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (evt.clientX ?? evt.touches?.[0]?.clientX) - rect.left;
+  const y = (evt.clientY ?? evt.touches?.[0]?.clientY) - rect.top;
+  return {x,y};
+}
+const toggleValve = (evt)=>{
+  evt.preventDefault();
+  const {x,y} = pointerXY(evt);
+  const e = hitValve(level, x, y);
+  if (e) {
+    e.valveOpen = !e.valveOpen;
+    // If you open a valve mid-run and upstream is filled, allow water to enter:
+    // Quick heuristic: if either end node has a filled edge already, seed this edge.
+    if (sim.running) {
+      const nodeById = new Map(level.nodes.map(n=>[n.id,n]));
+      const aFilled = level.edges.some(ed => (ed.a===e.a||ed.b===e.a) && ed.filled);
+      const bFilled = level.edges.some(ed => (ed.a===e.b||ed.b===e.b) && ed.filled);
+      if (aFilled && !level.sourceId===e.a) sim.active.push({eid:e.id, dir:+1, t:e.t||0});
+      if (bFilled && !level.sourceId===e.b) sim.active.push({eid:e.id, dir:-1, t:e.t||0});
+    }
+  }
+};
+canvas.addEventListener('click', toggleValve);
+canvas.addEventListener('touchstart', toggleValve, {passive:false});
+
+// Start paused
+sim.reset();
+renderer.draw();
+</script>
+</body>
+</html>
