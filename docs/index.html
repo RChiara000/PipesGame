@@ -42,8 +42,9 @@
   #sinkStatus { padding:2px 8px; border:1px solid #2a3570; border-radius:999px; }
 
   /* Main must flex to fill the rest */
-  main { display:flex; flex:1; min-height:0; }
-#stageWrap { flex:1; position:relative; overflow:hidden; }
+  main { flex:1; min-height:0; display:flex; }
+  /* Stage wrapper must grow */
+  #stageWrap { position:relative; flex:1; min-height:0; overflow:hidden; }
 
   canvas {
     width:100%; height:100%; display:block;
