@@ -359,34 +359,95 @@ class Renderer {
     return {x,y};
   }
   drawPipeBase(a,b,curve,isChute){
-    const ctx=this.ctx;
-    ctx.save();
-    ctx.lineCap='round'; ctx.lineJoin='round';
-    ctx.lineWidth=isChute?14:12;
-    ctx.strokeStyle=isChute?'#6b86ff':'#5f79d9';
-    ctx.globalAlpha=0.95;
-    ctx.beginPath(); ctx.moveTo(a.x,a.y);
-    if (curve) ctx.quadraticCurveTo(curve.cx,curve.cy,b.x,b.y); else ctx.lineTo(b.x,b.y);
-    ctx.stroke(); ctx.restore();
-  }
-  drawPipeFill(a,b,curve,t,dir,brightness){
-    if (t<=0) return;
-    const ctx=this.ctx;
-    const steps=Math.ceil(28*t);
-    const k = clamp(brightness ?? 1, 0, 1);
-    const lineW = 6 + 4*k;
-    const alpha = 0.35 + 0.65*k;
-    const glow  = 4 + 8*k;
+  const ctx=this.ctx;
 
-    ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
-    ctx.lineWidth=lineW; ctx.strokeStyle='#3ad0ff'; ctx.shadowColor='#3ad0ff'; ctx.shadowBlur=glow; ctx.globalAlpha=alpha;
-    let last=this.pointAt(a,b,curve, dir===+1?0:1);
-    for (let i=1;i<=steps;i++){
-      const tt=(i/steps)*t, param=dir===+1?tt:(1-tt), p=this.pointAt(a,b,curve,param);
-      ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last=p;
+  // 1) shadow/outer
+  ctx.save();
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.globalAlpha=0.95;
+
+  // outer dark rim
+  ctx.lineWidth = isChute ? 22 : 20;
+  ctx.strokeStyle = '#20343f';
+  ctx.beginPath(); ctx.moveTo(a.x,a.y);
+  if (curve) ctx.quadraticCurveTo(curve.cx,curve.cy,b.x,b.y); else ctx.lineTo(b.x,b.y);
+  ctx.stroke();
+
+  // 2) mid tube body (teal)
+  ctx.lineWidth = isChute ? 18 : 16;
+  ctx.strokeStyle = isChute ? '#34b7ff' : '#4e7f90';
+  ctx.beginPath(); ctx.moveTo(a.x,a.y);
+  if (curve) ctx.quadraticCurveTo(curve.cx,curve.cy,b.x,b.y); else ctx.lineTo(b.x,b.y);
+  ctx.stroke();
+
+  // 3) glossy highlight
+  ctx.lineWidth = isChute ? 8 : 7;
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath();
+  if (!curve){
+    // draw highlight slightly offset to one side
+    const tmid=0.5, tan=tangentAt(a,b,null,tmid), n={x:-tan.y, y:tan.x};
+    ctx.moveTo(a.x+n.x*4, a.y+n.y*4);
+    ctx.lineTo(b.x+n.x*4, b.y+n.y*4);
+  } else {
+    // sample a few short highlight segments along the curve
+    for (let t=0; t<=0.8; t+=0.2){
+      const p=this.pointAt(a,b,curve,t), tan=tangentAt(a,b,curve,t), n={x:-tan.y,y:tan.x};
+      const p2=this.pointAt(a,b,curve,Math.min(1,t+0.12));
+      ctx.moveTo(p.x+n.x*4, p.y+n.y*4);
+      ctx.lineTo(p2.x+n.x*4, p2.y+n.y*4);
     }
+  }
+  ctx.stroke();
+
+  // 4) metal collars/bands every ~1.5 “diameters”
+  const step = 0.18;                // spacing along pipe (0..1)
+  const bandW = isChute ? 14 : 12;  // band width
+  for (let t=step; t<=0.9; t+=step){
+    const p=this.pointAt(a,b,curve,t);
+    const tan=tangentAt(a,b,curve,t), n={x:-tan.y, y:tan.x};
+    ctx.save();
+    ctx.translate(p.x,p.y);
+    // draw short thick segment perpendicular to the pipe = a ring
+    ctx.rotate(Math.atan2(tan.y,tan.x));
+    // dark rim
+    ctx.strokeStyle='#2a3f49'; ctx.lineWidth=bandW+4; ctx.beginPath();
+    ctx.moveTo(-1,0); ctx.lineTo(1,0); ctx.stroke();
+    // mid metal
+    ctx.strokeStyle='#6f858f'; ctx.lineWidth=bandW; ctx.beginPath();
+    ctx.moveTo(-1,0); ctx.lineTo(1,0); ctx.stroke();
+    // thin inner line
+    ctx.strokeStyle='rgba(255,255,255,.25)'; ctx.lineWidth=2; ctx.beginPath();
+    ctx.moveTo(-1,0); ctx.lineTo(1,0); ctx.stroke();
     ctx.restore();
   }
+
+  ctx.restore();
+},
+
+drawPipeFill(a,b,curve,t,dir,brightness){
+  if (t<=0) return;
+  const ctx=this.ctx;
+  const k = clamp(brightness ?? 1, 0, 1);
+  const lineW = 10 + 6*k;                 // a little thinner than body
+  const glow  = 8 + 10*k;
+
+  ctx.save();
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.lineWidth=lineW;
+  ctx.strokeStyle='#27d1ff';
+  ctx.shadowColor='#27d1ff';
+  ctx.shadowBlur=glow;
+  // draw in small chunks to respect direction + t
+  const steps=Math.ceil(28*t);
+  let last=this.pointAt(a,b,curve, dir===+1?0:1);
+  for (let i=1;i<=steps;i++){
+    const tt=(i/steps)*t, param=dir===+1?tt:(1-tt), p=this.pointAt(a,b,curve,param);
+    ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last=p;
+  }
+  ctx.restore();
+}
+
   drawValve(mid, open){
     const ctx=this.ctx;
     ctx.save(); ctx.lineWidth=2;
@@ -595,6 +656,22 @@ class FlowSim {
 }
 
 /* ============ Recommendation (unchanged) ============ */
+
+// Tangent for straight or quadratic segment
+function tangentAt(a,b,curve,t){
+  if (!curve){
+    const dx=b.x-a.x, dy=b.y-a.y;
+    const len=Math.hypot(dx,dy)||1;
+    return {x:dx/len, y:dy/len};
+  }
+  // derivative of quadratic Bezier
+  const dx = 2*(1-t)*(curve.cx-a.x) + 2*t*(b.x - curve.cx);
+  const dy = 2*(1-t)*(curve.cy-a.y) + 2*t*(b.y - curve.cy);
+  const len = Math.hypot(dx,dy)||1;
+  return {x:dx/len, y:dy/len};
+}
+
+      
 function buildAdj(level){
   const nodeById = new Map(level.nodes.map(n=>[n.id,n]));
   const out = new Map(level.nodes.map(n=>[n.id, []]));
