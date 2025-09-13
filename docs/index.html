@@ -2,17 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-<title>Valves & Diamonds — Vertical, Moderate Complexity, No Scroll</title>
+<meta name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Valves & Diamonds — Tablet Fit + Valve-First Flow</title>
 <style>
   :root { --bg:#0b1020; --panel:#111831; --accent:#3ad0ff; --good:#28d17c; --text:#e8eefb; --sink:#6be3a3; }
   * { box-sizing:border-box; }
-  html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--text);
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
               font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
-  #app { display:flex; flex-direction:column; height:100vh; }
+  #app { display:flex; flex-direction:column; height:100dvh; }
   header { padding:6px 10px; background:linear-gradient(180deg,#0e1530,#0b1020); border-bottom:1px solid #1d2547; display:flex; gap:8px; align-items:center; }
   header h1 { font-size:14px; margin:0; color:var(--accent); font-weight:700; }
-  .controls { display:flex; gap:6px; align-items:center; }
+  .controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   button { background:#1a2346; border:1px solid #2a3570; color:#e8eefb; padding:6px 10px; border-radius:10px; font-weight:600; cursor:pointer; }
   button:hover { background:#243062; }
   #flowRate { width:110px; }
@@ -20,9 +21,12 @@
   #sinkStatus { padding:2px 8px; border:1px solid #2a3570; border-radius:999px; }
   main { flex:1; min-height:0; display:grid; grid-template-columns: 1fr; }
   #stageWrap { position:relative; overflow:hidden; }
-  canvas { width:100%; height:100%; display:block; background:radial-gradient(1200px 1200px at 80% -10%, #17234a 0%, #0b1020 55%); }
+  canvas {
+    width:100%; height:100%; display:block;
+    background:radial-gradient(1200px 1200px at 80% -10%, #17234a 0%, #0b1020 55%);
+    touch-action: none;
+  }
 
-  /* Overlay */
   .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(7,12,26,.6); }
   .overlay.hidden { display:none; }
   .overlay .panel { background:#0f1734; border:1px solid #26336b; border-radius:14px; padding:14px; min-width:280px; text-align:center; }
@@ -42,7 +46,7 @@
       <button id="pauseBtn">Pause</button>
       <button id="resetBtn">Reset</button>
       <button id="nextBtn">Next</button>
-      <span>Flow <input type="range" id="flowRate" min="0.5" max="3" step="0.1" value="1.2"></span>
+      <span>Flow <input type="range" id="flowRate" min="0.5" max="3" step="0.1" value="1.4"></span>
     </div>
     <div id="hud">
       <span>Level <strong id="levelNum">1</strong></span>
@@ -195,7 +199,7 @@ class PipeLevel {
       if (!e.valveOpen && Math.random() < openProb) e.valveOpen = true;
     }
 
-    // diamonds on source→sink gravity paths
+    // diamonds along plausible source→sink routes
     const {forwardNodes, backwardNodes} = this.forwardBackwardSets(nodeById);
     const onSrcSinkPath = (e)=>{
       const A=nodeById.get(e.a), B=nodeById.get(e.b);
@@ -209,7 +213,7 @@ class PipeLevel {
     [...picked].forEach(i => { candidates[i].hasDiamond = true; });
   }
 
-  // Gravity rule: flat or down (no up). This makes T-splits (left/right) both valid.
+  // Gravity rule: flat or down (no up)
   allowedByGravity(nodeById, aId, bId){
     const A=nodeById.get(aId), B=nodeById.get(bId);
     if (!A || !B) return false;
@@ -245,18 +249,24 @@ class PipeLevel {
   }
 }
 
-/* ============ Renderer (intensity-aware visuals) ============ */
+/* ============ Renderer ============ */
 class Renderer {
   constructor(canvas, level, sim){
     this.c=canvas; this.ctx=canvas.getContext('2d'); this.level=level; this.sim=sim;
-    this.dpr=Math.max(1, Math.min(2, window.devicePixelRatio||1));
+    this.dpr=1;
+    const ro = new ResizeObserver(()=>this.resize());
+    ro.observe(document.getElementById('stageWrap'));
+    window.addEventListener('orientationchange', ()=>this.resize(), {passive:true});
+    window.addEventListener('resize', ()=>this.resize(), {passive:true});
     this.resize();
-    window.addEventListener('resize', ()=>this.resize());
   }
   resize(){
     const rect=this.c.getBoundingClientRect();
-    this.c.width=rect.width*this.dpr; this.c.height=rect.height*this.dpr;
-    this.ctx.setTransform(this.dpr,0,0,this.dpr,0,0);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.dpr = dpr;
+    this.c.width=Math.max(1, Math.floor(rect.width*dpr));
+    this.c.height=Math.max(1, Math.floor(rect.height*dpr));
+    this.ctx.setTransform(dpr,0,0,dpr,0,0);
     this.draw();
   }
   pointAt(a,b,curve,t){
@@ -280,9 +290,9 @@ class Renderer {
     const ctx=this.ctx;
     const steps=Math.ceil(28*t);
     const k = clamp(brightness ?? 1, 0, 1);
-    const lineW = 6 + 4*k;        // min 6px, max 10px
-    const alpha = 0.35 + 0.65*k;  // softer when split
-    const glow  = 4 + 8*k;        // reduce shine for small branches
+    const lineW = 6 + 4*k;
+    const alpha = 0.35 + 0.65*k;
+    const glow  = 4 + 8*k;
 
     ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
     ctx.lineWidth=lineW; ctx.strokeStyle='#3ad0ff'; ctx.shadowColor='#3ad0ff'; ctx.shadowBlur=glow; ctx.globalAlpha=alpha;
@@ -348,12 +358,13 @@ class Renderer {
       const a=nodeById.get(e.a), b=nodeById.get(e.b);
       this.drawPipeBase(a,b,e.curve,false);
     }
-    // water (intensity-aware)
+
+    // water for BOTH open and closed valves (partial fills stop at valve)
     for (const e of this.level.edges){
-      if (!e.valveOpen) continue;
       const a=nodeById.get(e.a), b=nodeById.get(e.b);
       this.drawPipeFill(a,b,e.curve, e.t, e.dir||+1, e.brightness ?? 1);
     }
+
     // diamonds
     for (const e of this.level.edges){
       if (!e.hasDiamond) continue;
@@ -370,112 +381,195 @@ class Renderer {
   }
 }
 
-/* ============ Simulation (split to ALL open outs; no shrink) ============ */
+/* ============ Flow (VALVE-FIRST, gravity-enforced, idle detector) ============ */
 class FlowSim {
   constructor(level){
     this.level=level;
-    this.active=[]; // {eid, dir, t, intensity}
+    // fronts: {eid, dir, t, intensity, stage:'toValve'|'waiting'|'toEnd', fromNode}
+    this.active=[];
     this.running=false;
     this.paused=false;
     this.started=false;
     this.speed=1.2;
     this.collected=0;
     this.sinkReached=false;
+
+    this.lastProgressMs = performance.now();
+    this.idleMs = 1000; // if stuck waiting at closed valves for >=1s -> stop & show overlay
   }
   reset(){
     this.active=[]; this.running=false; this.paused=false; this.started=false;
     this.collected=0; this.sinkReached=false;
-    for (const e of this.level.edges){ e.filled=false; e.t=0; e.diamondTaken=false; e.dir=+1; e.brightness=0; }
+    this.lastProgressMs = performance.now();
+    for (const e of this.level.edges){
+      e.filled=false; e.t=0; e.diamondTaken=false; e.dir=+1; e.brightness=0;
+    }
     document.getElementById('sinkReached').textContent = 'No';
     hideOverlay();
   }
-  allowedByGravity(fromNodeId, toNodeId){
-    const nb=new Map(this.level.nodes.map(n=>[n.id,n]));
-    return this.level.allowedByGravity(nb, fromNodeId, toNodeId);
-  }
-  seed(){
-    const nb=new Map(this.level.nodes.map(n=>[n.id,n])); const src=nb.get(this.level.sourceId); if (!src) return;
-    this.started=true;
-    for (const eid of src.edges){
-      const e=this.level.edges.find(x=>x.id===eid);
-      if (e && e.valveOpen){
-        const dir=(e.a===src.id)?+1:-1, from=(dir===+1)?e.a:e.b, to=(dir===+1)?e.b:e.a;
-        if (this.allowedByGravity(from,to)){ e.dir=dir; this.active.push({eid:e.id, dir, t:0, intensity:1}); }
-      }
+
+  // Branch from node to ALL connected valves (except immediate back-edge), obeying gravity
+  spawnFromNode(nodeId, cameFromEdgeId=null, intensity=1){
+    const nodeById=new Map(this.level.nodes.map(n=>[n.id,n]));
+    const n=nodeById.get(nodeId); if (!n) return;
+
+    const candidates = n.edges
+      .map(id=>this.level.edges.find(e=>e.id===id))
+      .filter(e=>e && e.id!==cameFromEdgeId) // avoid ping-pong
+      .map(e=>{
+        const dir = (e.a===n.id) ? +1 : -1;
+        const from = n.id;
+        const to = (dir===+1) ? e.b : e.a;
+        return {e, dir, from, to};
+      })
+      .filter(({e,from,to})=> this.level.allowedByGravity(nodeById, from, to)); // GRAVITY HERE
+
+    if (candidates.length===0) return;
+
+    const share = intensity / candidates.length;
+    for (const {e, dir} of candidates){
+      const startT = (dir===+1) ? 0 : 1;    // start at the node end
+      // first leg is always toward the valve at t=0.5
+      this.active.push({eid:e.id, dir, t:startT, intensity:share, stage:'toValve', fromNode:n.id});
     }
+  }
+
+  seed(){
+    const nodeById=new Map(this.level.nodes.map(n=>[n.id,n]));
+    const src=nodeById.get(this.level.sourceId); if (!src) return;
+    this.started=true;
+    // Start from source to ALL connected valves (gravity enforced inside)
+    this.spawnFromNode(src.id, null, 1);
     this.running=this.active.length>0;
     hideOverlay();
   }
+
+  finish(){
+    this.running=false;
+    document.getElementById('finalScore').textContent = this.collected;
+    document.getElementById('finalTotal').textContent = level.edges.filter(e=>e.hasDiamond).length;
+    const {edgeSet, diamondCount} = computeRecommendedValveSet(level);
+    level.solutionEdgeIds = edgeSet;
+    level.solutionDiamonds = diamondCount;
+    document.getElementById('solutionSummary').textContent =
+      `Recommended network targets ${diamondCount}/${level.edges.filter(e=>e.hasDiamond).length} diamonds.`;
+    showOverlay();
+  }
+
   step(dt){
     if (!this.running || this.paused) return;
-    const nb=new Map(this.level.nodes.map(n=>[n.id,n])); const next=[];
+    const nodeById=new Map(this.level.nodes.map(n=>[n.id,n]));
+    const next=[];
+    let progressed=false;
+
     for (const front of this.active){
-      const e=this.level.edges.find(x=>x.id===front.eid); if (!e || !e.valveOpen) continue;
-      const len=e.len||1; const advance=(dt*0.35*this.speed)/len;
-      front.t=Math.min(1, front.t+advance);
-      e.t=Math.max(e.t, front.t);
-      e.dir=front.dir;
+      const e=this.level.edges.find(x=>x.id===front.eid); if (!e) continue;
+
+      // Handle waiting fronts at a closed valve: proceed when opened
+      if (front.stage==='waiting'){
+        e.t=Math.max(e.t, 0.5);
+        e.dir=front.dir;
+        e.brightness=Math.max(e.brightness ?? 0, front.intensity ?? 1);
+        if (e.valveOpen){
+          front.stage='toEnd';
+          progressed=true;
+        }
+        next.push(front);
+        continue;
+      }
+
+      // determine current target along this edge
+      const target = (front.stage==='toValve') ? 0.5 : 1.0;
+      const curParam = (front.dir===+1) ? front.t : (1-front.t);
+      const len = e.len || 1;
+      const advance = (dt * 1.0 * this.speed) / len; // snappy visuals
+      const newParam = Math.min(target, curParam + advance);
+
+      if (newParam > curParam + 1e-6) progressed=true;
+
+      // write back t in the edge-local param
+      front.t = (front.dir===+1) ? newParam : (1 - newParam);
+
+      // visuals
+      e.t = Math.max(e.t, Math.abs(newParam));
+      e.dir = front.dir;
       e.brightness = Math.max(e.brightness ?? 0, front.intensity ?? 1);
 
-      // pickup
+      // diamond pickup if passing the diamond point
       if (e.hasDiamond && !e.diamondTaken){
-        const passed = (front.dir===+1) ? (front.t >= e.diamondT) : (front.t >= (1 - e.diamondT));
-        if (passed){ e.diamondTaken=true; this.collected++; updateHUD(); }
-      }
-
-      const reachNodeId = (front.dir===+1) ? e.b : e.a;
-      if (!this.sinkReached && nb.get(reachNodeId)?.isSink){
-        this.sinkReached = true;
-        document.getElementById('sinkReached').textContent = 'Yes';
-      }
-
-      if (front.t>=1){
-        e.filled=true;
-
-        const reach = nb.get(reachNodeId);
-        const outs = [];
-        for (const nid of reach.edges){
-          if (nid===e.id) continue; // avoid immediately going back through same edge
-          const ne=this.level.edges.find(x=>x.id===nid); if (!ne || !ne.valveOpen) continue;
-          const dir=(ne.a===reach.id)?+1:-1;
-          const from=reach.id, to=(dir===+1)?ne.b:ne.a;
-          if (this.allowedByGravity(from,to)) outs.push({ne, dir});
+        const passParam = (front.dir===+1) ? front.t : (1-front.t);
+        let crossed=false;
+        if (front.stage==='toValve'){
+          crossed = (front.dir===+1)
+            ? (e.diamondT <= passParam && e.diamondT >= 0)
+            : ((1 - e.diamondT) <= (1 - passParam) && (1 - e.diamondT) >= 0);
+        } else {
+          crossed = (front.dir===+1)
+            ? (e.diamondT <= passParam && e.diamondT >= 0.5)
+            : ((1 - e.diamondT) <= (1 - passParam) && (1 - e.diamondT) >= 0.5);
         }
+        if (crossed){ e.diamondTaken=true; this.collected++; progressed=true; updateHUD(); }
+      }
 
-        // split to ALL open gravity-valid outs (T or N-way)
-        if (outs.length>0){
-          const share = (front.intensity ?? 1) / outs.length; // visual only
-          for (const o of outs){
-            next.push({eid:o.ne.id, dir:o.dir, t:0, intensity:share});
-          }
+      // arrival?
+      const arrived = Math.abs(newParam - target) < 1e-6 || newParam===target;
+      if (!arrived){
+        next.push(front);
+        continue;
+      }
+
+      // handle arrival at valve or end
+      if (front.stage==='toValve'){
+        if (!e.valveOpen){
+          front.stage='waiting';
+          e.t=Math.max(e.t, 0.5);
+          next.push(front);
+        } else {
+          front.stage='toEnd';
+          next.push(front);
         }
       } else {
-        next.push(front);
+        // reached far node -> mark filled and branch further (gravity enforced in spawnFromNode)
+        e.filled=true;
+        const reachNodeId = (front.dir===+1) ? e.b : e.a;
+
+        if (!this.sinkReached && nodeById.get(reachNodeId)?.isSink){
+          this.sinkReached = true;
+          document.getElementById('sinkReached').textContent = 'Yes';
+        }
+
+        // branch to all connected from this node, excluding the pipe we just came through
+        this.spawnFromNode(reachNodeId, e.id, front.intensity);
+        progressed=true;
       }
     }
+
     this.active=next;
 
-    // Stop condition
+    if (progressed) this.lastProgressMs = performance.now();
+
+    // Finish conditions:
+    //  A) no active fronts
+    //  B) all active fronts are waiting at closed valves AND we've been idle long enough
+    const now = performance.now();
+    const allWaitingClosed = this.active.length>0 && this.active.every(fr => {
+      if (fr.stage!=='waiting') return false;
+      const edge = this.level.edges.find(e=>e.id===fr.eid);
+      return edge && !edge.valveOpen;
+    });
+
     if (this.active.length===0){
-      this.running=false;
-      if (this.started && !this.paused){
-        document.getElementById('finalScore').textContent = this.collected;
-        document.getElementById('finalTotal').textContent = level.edges.filter(e=>e.hasDiamond).length;
-
-        // compute solution summary for the overlay (network, not a single path)
-        const {edgeSet, diamondCount} = computeRecommendedValveSet(level);
-        level.solutionEdgeIds = edgeSet;
-        level.solutionDiamonds = diamondCount;
-        document.getElementById('solutionSummary').textContent =
-          `Recommended network targets ${diamondCount}/${level.edges.filter(e=>e.hasDiamond).length} diamonds.`;
-
-        showOverlay();
-      }
+      this.finish();
+      return;
+    }
+    if (allWaitingClosed && (now - this.lastProgressMs) >= this.idleMs){
+      this.finish();
+      return;
     }
   }
 }
 
-/* ============ Recommendation (union of shortest routes to every diamond, then to sink) ============ */
+/* ============ Recommendation (unchanged) ============ */
 function buildAdj(level){
   const nodeById = new Map(level.nodes.map(n=>[n.id,n]));
   const out = new Map(level.nodes.map(n=>[n.id, []]));
@@ -493,110 +587,58 @@ function buildAdj(level){
   }
   return {out, rev};
 }
-
 function bfsFrom(out, start){
-  const prev = new Map(); // node -> {prevNode, eid}
-  const seen = new Set([start]);
-  const q=[start];
+  const prev = new Map(); const seen = new Set([start]); const q=[start];
   while(q.length){
     const u=q.shift();
     for (const {to, eid} of out.get(u)){
-      if (!seen.has(to)){
-        seen.add(to);
-        prev.set(to, {prevNode:u, eid});
-        q.push(to);
-      }
+      if (!seen.has(to)){ seen.add(to); prev.set(to, {prevNode:u, eid}); q.push(to); }
     }
   }
   return {prev, seen};
 }
-
 function nextEdgeToSink(rev, sink){
-  // BFS on reverse graph to get, for any node u, the first edge to take toward sink
-  const next = new Map(); // node -> eid (forward edge u->v toward sink)
-  const seen = new Set([sink]);
-  const q=[sink];
+  const next = new Map(); const seen = new Set([sink]); const q=[sink];
   while(q.length){
     const v=q.shift();
-    for (const {from, eid} of rev.get(v)){ // edge from -> v
-      if (!seen.has(from)){
-        seen.add(from);
-        next.set(from, eid); // first step from 'from' toward sink
-        q.push(from);
-      }
+    for (const {from, eid} of rev.get(v)){
+      if (!seen.has(from)){ seen.add(from); next.set(from, eid); q.push(from); }
     }
   }
   return {next, seen};
 }
-
 function reconstructPathEdgesTo(prevMap, target, source){
-  const edges=[];
-  let cur=target;
-  while(cur !== source && prevMap.has(cur)){
-    const {prevNode, eid} = prevMap.get(cur);
-    edges.push(eid);
-    cur = prevNode;
-  }
-  edges.reverse();
-  return (cur===source)? edges : []; // empty if unreachable
+  const edges=[]; let cur=target;
+  while(cur !== source && prevMap.has(cur)){ const {prevNode, eid} = prevMap.get(cur); edges.push(eid); cur = prevNode; }
+  edges.reverse(); return (cur===source)? edges : [];
 }
-
 function reconstructPathEdgesFrom(nextMap, start){
-  const edges=[];
-  let cur=start;
-  const safety=2000; // guard
-  let steps=0;
+  const edges=[]; let cur=start; const safety=2000; let steps=0;
   while(nextMap.has(cur) && steps<safety){
-    const eid = nextMap.get(cur);
-    edges.push(eid);
-    // move to the head of that eid in forward direction
-    // We don't have direct node mapping here, so we infer using level edges:
-    const e = level.edges.find(x=>x.id===eid);
-    if (!e) break;
-    const to = (e.a===cur)? e.b : (e.b===cur? e.a : null);
-    if (!to) break;
-    cur = to;
-    steps++;
+    const eid = nextMap.get(cur); edges.push(eid);
+    const e = level.edges.find(x=>x.id===eid); if (!e) break;
+    const to = (e.a===cur)? e.b : (e.b===cur? e.a : null); if (!to) break; cur = to; steps++;
   }
   return edges;
 }
-
 function computeRecommendedValveSet(level){
   const {out, rev} = buildAdj(level);
   const source = level.sourceId, sink = level.sinkId;
-
   const {prev: prevFromSrc, seen: reachFromSrc} = bfsFrom(out, source);
   const {next: nextTowardSink, seen: reachToSink} = nextEdgeToSink(rev, sink);
-
   const edgeSet = new Set();
-
-  // ensure sink reachable at least via chute if no diamonds
   for (const e of level.edges){ if (e.isChute) edgeSet.add(e.id); }
-
-  // For every diamond edge, add a route: source -> entry -> (diamond edge dir) -> ... -> sink
   for (const e of level.edges.filter(x=>x.hasDiamond)){
-    const u = e.a, v = e.b;
-
-    let added=false;
-
-    // try u -> v direction
+    const u = e.a, v = e.b; let added=false;
     if (!added && out.get(u).some(o=>o.to===v) && reachFromSrc.has(u) && reachToSink.has(v)){
       reconstructPathEdgesTo(prevFromSrc, u, source).forEach(id=>edgeSet.add(id));
-      edgeSet.add(e.id);
-      reconstructPathEdgesFrom(nextTowardSink, v).forEach(id=>edgeSet.add(id));
-      added=true;
+      edgeSet.add(e.id); reconstructPathEdgesFrom(nextTowardSink, v).forEach(id=>edgeSet.add(id)); added=true;
     }
-    // try v -> u direction
     if (!added && out.get(v).some(o=>o.to===u) && reachFromSrc.has(v) && reachToSink.has(u)){
       reconstructPathEdgesTo(prevFromSrc, v, source).forEach(id=>edgeSet.add(id));
-      edgeSet.add(e.id);
-      reconstructPathEdgesFrom(nextTowardSink, u).forEach(id=>edgeSet.add(id));
-      added=true;
+      edgeSet.add(e.id); reconstructPathEdgesFrom(nextTowardSink, u).forEach(id=>edgeSet.add(id)); added=true;
     }
-    // If neither direction worked (shouldn't happen), skip.
   }
-
-  // Count how many diamonds live on opened edges
   const diamondCount = level.edges.reduce((s,e)=> s + ((e.hasDiamond && edgeSet.has(e.id))?1:0), 0);
   return {edgeSet, diamondCount};
 }
@@ -669,7 +711,7 @@ overlayApplySol.addEventListener('click', ()=>{
 
 flowRate.addEventListener('input', ()=>{ sim.speed=Number(flowRate.value); });
 
-// Tap valves (opens mid-run: seed forward)
+// Tap valves (open/close). If a front is waiting at this valve, it will continue next tick.
 function pointerXY(evt){
   const r=canvas.getBoundingClientRect();
   const x=(evt.clientX ?? evt.touches?.[0]?.clientX)-r.left;
@@ -684,16 +726,7 @@ function hitValve(level,x,y){
 const toggleValve=(evt)=>{
   evt.preventDefault();
   const {x,y}=pointerXY(evt); const e=hitValve(level,x,y);
-  if (e){
-    e.valveOpen=!e.valveOpen;
-    if (sim.running && e.valveOpen){
-      // if newly opened at a filled node, seed forward
-      const aFilled=level.edges.some(ed=>ed.filled&&(ed.a===e.a||ed.b===e.a));
-      const bFilled=level.edges.some(ed=>ed.filled&&(ed.a===e.b||ed.b===e.b));
-      if (aFilled){ const from=e.a,to=e.b; if (sim.allowedByGravity(from,to)) sim.active.push({eid:e.id, dir:+1, t:0, intensity:1}); }
-      if (bFilled){ const from=e.b,to=e.a; if (sim.allowedByGravity(from,to)) sim.active.push({eid:e.id, dir:-1, t:0, intensity:1}); }
-    }
-  }
+  if (e){ e.valveOpen=!e.valveOpen; }
 };
 canvas.addEventListener('click', toggleValve);
 canvas.addEventListener('touchstart', toggleValve, {passive:false});
@@ -703,4 +736,3 @@ sim.reset(); renderer.draw();
 </script>
 </body>
 </html>
-
